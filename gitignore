@@ -1,0 +1,40 @@
+# SolidWorks Backup and Temp Files
+*.sldprt~*
+*.sldasm~*
+*.slddrw~*
+*.swp
+*.bak
+*.tmp
+
+
+~$*.sldprt
+~$*.sldasm
+~$*.slddrw
+~$*.sld
+
+# For systems with case-sensitive (SolidWorks uses both)
+~$*.SLDPRT
+~$*.SLDASM
+~$*.SLDDRW
+~$*.SLD
+
+Solidworks/~$*.SLDPRT
+Solidworks/~$*.SLDASM
+Solidworks/~$*.SLDDRW
+Solidworks/~$*.SLD
+
+# SolidWorks PDM Cache
+swpdm/
+
+# Simulation Results
+*.cwr
+*.out
+*.fld
+
+# Toolbox and Libraries (if not shared)
+Toolbox/
+DesignLibrary/
+
+# OS-specific junk files
+DS_Store
+Thumbs.db
