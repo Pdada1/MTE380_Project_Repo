@@ -18,10 +18,10 @@
 ~$*.SLDDRW
 ~$*.SLD
 
-Solidworks/~$*.SLDPRT
-Solidworks/~$*.SLDASM
-Solidworks/~$*.SLDDRW
-Solidworks/~$*.SLD
+SolidWorks/~$*.SLDPRT
+SolidWorks/~$*.SLDASM
+SolidWorks/~$*.SLDDRW
+SolidWorks/~$*.SLD
 
 # SolidWorks PDM Cache
 swpdm/
