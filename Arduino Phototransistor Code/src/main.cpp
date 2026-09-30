@@ -1,11 +1,11 @@
 #include <Arduino.h>
 
 const int SENSOR_AMT=8;
-uint16_t count=0;
-const int pinA=2;
-const int pinB=3;
-const int pinC=4;
-const int analog_in=A1;
+uint8_t count=0;
+const int pinA=A0;
+const int pinB=A1;
+const int pinC=A2;
+const int analog_in=A3;
 void setup() {
   // put your setup code here, to run once:
   //Consolidate to functions in lib later and declare constants for the pins
@@ -28,9 +28,10 @@ char buf[40];
 void loop() {
   //set outputs to required polling of value 
   //10 bit adc max value 1023
-  digitalWrite(pinA,count>>2);
+  digitalWrite(pinC,count>>2);
   digitalWrite(pinB,count>>1 && 0x1);
-  digitalWrite(pinC,count && 0x1);
+  digitalWrite(pinA,count && 0x1);
+
   uint16_t sensor_value= analogRead(analog_in);         // 0-1023
   uint8_t pkt[2];
   Serial.println(sensor_value);
