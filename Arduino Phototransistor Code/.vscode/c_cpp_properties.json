@@ -10,6 +10,7 @@
             "includePath": [
                 "C:/Users/ishan/OneDrive/Desktop/University/3B - Fall 2026/MTE380/MTE380_Project_Repo/Arduino Phototransistor Code/include",
                 "C:/Users/ishan/OneDrive/Desktop/University/3B - Fall 2026/MTE380/MTE380_Project_Repo/Arduino Phototransistor Code/src",
+                "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/Servo/src",
                 "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/cores/MegaCore",
                 "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/variants/100-pin-arduino-mega",
                 "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/AVR_examples/src",
@@ -17,7 +18,6 @@
                 "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/Flash/src",
                 "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/SD/src",
                 "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/SPI/src",
-                "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/Servo/src",
                 "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/SoftwareSerial/src",
                 "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/Timer/src",
                 "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/Wire/src",
@@ -29,6 +29,7 @@
                 "path": [
                     "C:/Users/ishan/OneDrive/Desktop/University/3B - Fall 2026/MTE380/MTE380_Project_Repo/Arduino Phototransistor Code/include",
                     "C:/Users/ishan/OneDrive/Desktop/University/3B - Fall 2026/MTE380/MTE380_Project_Repo/Arduino Phototransistor Code/src",
+                    "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/Servo/src",
                     "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/cores/MegaCore",
                     "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/variants/100-pin-arduino-mega",
                     "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/AVR_examples/src",
@@ -36,7 +37,6 @@
                     "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/Flash/src",
                     "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/SD/src",
                     "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/SPI/src",
-                    "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/Servo/src",
                     "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/SoftwareSerial/src",
                     "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/Timer/src",
                     "C:/Users/ishan/.platformio/packages/framework-arduino-avr-megacore/libraries/Wire/src",
