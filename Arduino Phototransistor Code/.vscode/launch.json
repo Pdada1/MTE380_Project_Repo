@@ -12,9 +12,9 @@
             "type": "platformio-debug",
             "request": "launch",
             "name": "PIO Debug",
-            "executable": "C:/Users/Pranav Mahabal/Documents/Github/MTE380_Project_Repo/Arduino Phototransistor Code/.pio/build/megaatmega2560/firmware.elf",
+            "executable": "C:/Users/ishan/OneDrive/Desktop/University/3B - Fall 2026/MTE380/MTE380_Project_Repo/Arduino Phototransistor Code/.pio/build/megaatmega2560/firmware.elf",
             "projectEnvName": "megaatmega2560",
-            "toolchainBinDir": "C:/Users/Pranav Mahabal/.platformio/packages/toolchain-atmelavr/bin",
+            "toolchainBinDir": "C:/Users/ishan/.platformio/packages/toolchain-atmelavr/bin",
             "internalConsoleOptions": "openOnSessionStart",
             "preLaunchTask": {
                 "type": "PlatformIO",
@@ -25,18 +25,18 @@
             "type": "platformio-debug",
             "request": "launch",
             "name": "PIO Debug (skip Pre-Debug)",
-            "executable": "C:/Users/Pranav Mahabal/Documents/Github/MTE380_Project_Repo/Arduino Phototransistor Code/.pio/build/megaatmega2560/firmware.elf",
+            "executable": "C:/Users/ishan/OneDrive/Desktop/University/3B - Fall 2026/MTE380/MTE380_Project_Repo/Arduino Phototransistor Code/.pio/build/megaatmega2560/firmware.elf",
             "projectEnvName": "megaatmega2560",
-            "toolchainBinDir": "C:/Users/Pranav Mahabal/.platformio/packages/toolchain-atmelavr/bin",
+            "toolchainBinDir": "C:/Users/ishan/.platformio/packages/toolchain-atmelavr/bin",
             "internalConsoleOptions": "openOnSessionStart"
         },
         {
             "type": "platformio-debug",
             "request": "launch",
             "name": "PIO Debug (without uploading)",
-            "executable": "C:/Users/Pranav Mahabal/Documents/Github/MTE380_Project_Repo/Arduino Phototransistor Code/.pio/build/megaatmega2560/firmware.elf",
+            "executable": "C:/Users/ishan/OneDrive/Desktop/University/3B - Fall 2026/MTE380/MTE380_Project_Repo/Arduino Phototransistor Code/.pio/build/megaatmega2560/firmware.elf",
             "projectEnvName": "megaatmega2560",
-            "toolchainBinDir": "C:/Users/Pranav Mahabal/.platformio/packages/toolchain-atmelavr/bin",
+            "toolchainBinDir": "C:/Users/ishan/.platformio/packages/toolchain-atmelavr/bin",
             "internalConsoleOptions": "openOnSessionStart",
             "loadMode": "manual"
         }

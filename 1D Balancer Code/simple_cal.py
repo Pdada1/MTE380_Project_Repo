@@ -19,7 +19,7 @@ class SimpleAutoCalibrator:
         self.BEAM_LENGTH_M = 0.2  # Known beam length in meters
         
         # Camera configuration
-        self.CAM_INDEX = 0  # Default camera index
+        self.CAM_INDEX = 1  # Default camera index
         self.FRAME_W, self.FRAME_H = 640, 480  # Frame dimensions
         
         # Calibration state tracking

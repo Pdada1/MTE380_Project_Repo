@@ -166,7 +166,7 @@ def detect_ball_x(frame):
 def main():
     """Test ball detection with current config."""
     detector = BallDetector()
-    cap = cv2.VideoCapture(0)  # Use default camera
+    cap = cv2.VideoCapture(1)  # Use default camera
     
     print("Ball Detection Test")
     print("Press 'q' to quit")
