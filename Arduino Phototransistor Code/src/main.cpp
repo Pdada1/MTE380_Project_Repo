@@ -27,14 +27,19 @@ unsigned long previousTime = 0;
 /* Servo Parameters */
 float servoCenter = 135.0;
 float servoMin = 110.0;
-float servoMax = 160.0;
+float servoMax = 145.0;
 
 /**
  * Calibrates the servo center/min/max positions according to the hardware setup
  */
-void calibrate_servo_limit(float *angle) {
+void calibrate_servo_limit(float *angle, char *text) {
+    Serial.println("---------------------------------------------------------------");
+    Serial.println(text);
     Serial.println("Use A/G to move fast, S/F to move slow, and E to save the value");
+    Serial.println("---------------------------------------------------------------");
+
     servo.write(*angle);
+    delay(20);
 
     while (1) {
         if (Serial.available() > 0) {
@@ -210,13 +215,16 @@ void servo_PID_move(float position) {
         servoMax
     );
 
-    servo.write(servoCommand);
+    servo.write((int)servoCommand);
 
     Serial.print("Position: ");
     Serial.print(position);
 
     Serial.print("\tError: ");
     Serial.print(error);
+
+    Serial.print("\tPID Output: ");
+    Serial.print(output);
 
     Serial.print("\tServo: ");
     Serial.println(servoCommand);
@@ -236,9 +244,9 @@ void setup() {
 
     previousTime = micros();
 
-    // calibrate_servo_limit(&servoCenter);
-    // calibrate_servo_limit(&servoMin);
-    // calibrate_servo_limit(&servoMax);
+    calibrate_servo_limit(&servoCenter, "Place tha ball between Q4 and Q5, then tilt the platform until it's steady");
+    calibrate_servo_limit(&servoMin, "Tilt the platform until the ball quickly rolls toward Q1");
+    calibrate_servo_limit(&servoMax, "Tilt the platform until the ball rolls quickly toward Q8");
 }
 
 /**
