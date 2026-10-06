@@ -16,18 +16,60 @@ Servo servo;
 const int SERVO_PIN = 5;
 
 /* PID parameters */
-float Kp = 8.0;
-float Ki = 0.0;
-float Kd = 0.0;
+float Kp = 5.0;
+float Ki = 1.0;
+float Kd = 3.0;
 
 float integral = 0.0;
 float previousError = 0.0;
 unsigned long previousTime = 0;
 
-/* Calibrated Servo Parameters */
-const float SERVO_CENTER = 90.0;
-const float SERVO_MIN = 40.0;
-const float SERVO_MAX = 130.0;
+/* Servo Parameters */
+float servoCenter = 135.0;
+float servoMin = 110.0;
+float servoMax = 145.0;
+
+/**
+ * Calibrates the servo center/min/max positions according to the hardware setup
+ */
+void calibrate_servo_limit(float *angle, char *text) {
+    Serial.println("---------------------------------------------------------------");
+    Serial.println(text);
+    Serial.println("Use A/G to move fast, S/F to move slow, and E to save the value");
+    Serial.println("---------------------------------------------------------------");
+
+    servo.write(*angle);
+    delay(20);
+
+    while (1) {
+        if (Serial.available() > 0) {
+            char key = Serial.read();
+
+            if (key == 'a' || key == 'A') {
+                *angle -= 10;
+            }
+            if (key == 'g' || key == 'G') {
+                *angle += 10;
+            }
+            if (key == 's' || key == 'S') {
+                *angle -= 1;
+            }
+            if (key == 'f' || key == 'F') {
+                *angle += 1;
+            }
+            if (key == 'e' || key == 'E') {
+                break;
+            }
+
+            *angle = constrain(*angle, 0, 180);
+            servo.write(*angle);
+
+            Serial.print("Angle: ");
+            Serial.println(*angle);
+        }
+    }
+
+}
 
 
 /**
@@ -155,7 +197,6 @@ void servo_PID_move(float position) {
 
     // Integral
     integral += error * dt;
-    integral = constrain(integral, -5.0, 5.0);
 
     // Derivative
     float derivative = (error - previousError) / dt;
@@ -166,21 +207,24 @@ void servo_PID_move(float position) {
         Ki * integral +
         Kd * derivative;
 
-    float servoCommand = SERVO_CENTER + output;
+    float servoCommand = servoCenter + output;
 
     servoCommand = constrain(
         servoCommand,
-        SERVO_MIN,
-        SERVO_MAX
+        servoMin,
+        servoMax
     );
 
-    servo.write(servoCommand);
+    servo.write((int)servoCommand);
 
     Serial.print("Position: ");
     Serial.print(position);
 
     Serial.print("\tError: ");
     Serial.print(error);
+
+    Serial.print("\tPID Output: ");
+    Serial.print(output);
 
     Serial.print("\tServo: ");
     Serial.println(servoCommand);
@@ -196,18 +240,56 @@ void setup() {
     Serial.begin(115200);
 
     servo.attach(SERVO_PIN);
-    servo.write(SERVO_CENTER);
+    servo.write(servoCenter);
 
     previousTime = micros();
+
+    calibrate_servo_limit(&servoCenter, "Place tha ball between Q4 and Q5, then tilt the platform until it's steady");
+    calibrate_servo_limit(&servoMin, "Tilt the platform until the ball quickly rolls toward Q1");
+    calibrate_servo_limit(&servoMax, "Tilt the platform until the ball rolls quickly toward Q8");
+}
+
+/**
+ * Provides a keyboard interface to tune the PID values
+ */
+void tune_PID(float increment) {
+    if (Serial.available() > 0) {
+        char key = Serial.read();
+        if (key == 'q') {
+            Kp += increment;
+        }
+        if (key == 'w') {
+            Ki += increment;
+        }
+        if (key == 'e') {
+            Kd += increment;
+        }
+        if (key == 'a') {
+            Kp -= increment;
+        }
+        if (key == 's') {
+            Ki -= increment;
+        }
+        if (key == 'd') {
+            Kd -= increment;
+        }
+
+        Serial.print("PID: ");
+        Serial.print(Kp);
+        Serial.print(" ");
+        Serial.print(Ki);
+        Serial.print(" ");
+        Serial.println(Kd);
+    }
 }
 
 
 void loop() {
-
     read_sensor_values();
     float position = estimate_ball_position();
     // print_sensor_values();
     servo_PID_move(position);
+    tune_PID(0.2);
 
-    delay(20);
+    delay(50);
 }
