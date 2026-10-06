@@ -46,3 +46,6 @@ DesignLibrary/
 # OS-specific junk files
 DS_Store
 Thumbs.db
+
+#Pycache
+__pycache__/

@@ -50,8 +50,8 @@ void loop() {
     newCommand = false;
     
     // Optional: Echo back the angle for debugging
-    Serial.print("Angle set to: ");
-    Serial.println(targetAngle);
+    //Serial.print("Angle set to: ");
+    //Serial.println(targetAngle);
   }
   
   // Small delay for stability
