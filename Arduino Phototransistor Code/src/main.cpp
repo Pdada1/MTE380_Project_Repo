@@ -219,15 +219,16 @@ void servo_PID_move(float position) {
 
     Serial.print("Position: ");
     Serial.print(position);
+    Serial.print("  ");
 
-    Serial.print("\tError: ");
-    Serial.print(error);
+    // Serial.print("\tError: ");
+    // Serial.print(error);
 
-    Serial.print("\tPID Output: ");
-    Serial.print(output);
+    // Serial.print("\tPID Output: ");
+    // Serial.print(output);
 
-    Serial.print("\tServo: ");
-    Serial.println(servoCommand);
+    // Serial.print("\tServo: ");
+    // Serial.println(servoCommand);
 }
 
 
@@ -287,7 +288,7 @@ void tune_PID(float increment) {
 void loop() {
     read_sensor_values();
     float position = estimate_ball_position();
-    // print_sensor_values();
+    print_sensor_values();
     servo_PID_move(position);
     tune_PID(0.2);
 

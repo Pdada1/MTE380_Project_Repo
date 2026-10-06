@@ -55,9 +55,12 @@ class BasicPIDController:
         """Send angle command to servo motor (clipped for safety)."""
         if self.servo:
             servo_angle = self.neutral_angle + angle
-            servo_angle = int(np.clip(servo_angle, 0, 30))
+            #NOTE: CHANGE THESE CONSTANTS BELOW:
+            servo_angle = int(np.clip(servo_angle, 110, 154))
             try:
+                print("YOYO")
                 self.servo.write(bytes([servo_angle]))
+                print("YOYO2")
             except Exception:
                 print("[SERVO] Send failed")
 
@@ -76,7 +79,7 @@ class BasicPIDController:
         self.prev_error = error
         # PID output (limit to safe beam range)
         output = P + I + D
-        output = np.clip(output, -15, 15)
+        output = np.clip(output, -30, 30)
         print(error)
         return output
 
@@ -116,12 +119,15 @@ class BasicPIDController:
         self.start_time = time.time()
         while self.running:
             try:
+                print("YO MY NAME JEFF")
                 # Wait for latest ball position from camera
                 position = self.position_queue.get(timeout=0.1)
                 # Compute control output using PID
                 control_output = self.update_pid(position)
+                print("JEFF2")
                 # Send control command to servo (real or simulated)
                 self.send_servo_angle(control_output)
+                print("JEFF3")
                 # Log results for plotting
                 current_time = time.time() - self.start_time
                 self.time_log.append(current_time)
@@ -130,6 +136,7 @@ class BasicPIDController:
                 self.control_log.append(control_output)
                 print(f"Pos: {position:.3f}m, Output: {control_output:.1f}°")
             except queue.Empty:
+                print("q mt :((((((((((((((((((")
                 continue
             except Exception as e:
                 print(f"[CONTROL] Error: {e}")
