@@ -25,9 +25,12 @@ float previousError = 0.0;
 unsigned long previousTime = 0;
 
 /* Servo Parameters */
-float servoCenter = 135.0;
-float servoMin = 110.0;
-float servoMax = 145.0;
+float servoCenter = 135;
+float servoMin = 110;
+float servoMax = 145;
+
+/* Phototransistor params - Store a ambient calibration for every valid servo angle*/
+int ambientReading[360][NUM_SENSORS] = {0};
 
 /**
  * Calibrates the servo center/min/max positions according to the hardware setup
@@ -71,13 +74,27 @@ void calibrate_servo_limit(float *angle, char *text) {
 
 }
 
-
 /**
  * Prints sensor values for debugging purposes
  */
 void print_sensor_values(void) {
     for (size_t sensor = 0; sensor < NUM_SENSORS; sensor++) {
         Serial.print(sensorValues[sensor]);
+
+        if (sensor < NUM_SENSORS - 1) {
+            Serial.print('\t');
+        }
+    }
+
+    Serial.println();
+}
+
+/**
+ * Prints ambient values at certain servo Angle for debugging purposes
+ */
+void print_ambient_values(int servoAngle) {
+    for (size_t sensor = 0; sensor < NUM_SENSORS; sensor++) {
+        Serial.print(ambientReading[servoAngle][sensor]);
 
         if (sensor < NUM_SENSORS - 1) {
             Serial.print('\t');
@@ -130,7 +147,7 @@ void read_sensor_values(void) {
 /**
  * Estimates the ball's current location using sensor readings.
  */
-float estimate_ball_position(void) {
+float estimate_ball_position(int servoAngle) {
 
     // Find strongest sensor
     size_t strongest = 0;
@@ -142,47 +159,32 @@ float estimate_ball_position(void) {
 
     // Handle left edge
     if (strongest == 0) {
-        float a = sensorValues[0];
-        float b = sensorValues[1];
-
-        return b / (a + b);
+        float a = sensorValues[0] - ambientReading[servoAngle][0];
+        float b = sensorValues[1] - ambientReading[servoAngle][1];
+        return b/(b+a);
     }
 
     // Handle right edge
     if (strongest == NUM_SENSORS - 1) {
-        float a = sensorValues[NUM_SENSORS - 2];
-        float b = sensorValues[NUM_SENSORS - 1];
-
-        return (NUM_SENSORS - 2) + b / (a + b);
+        float a = sensorValues[NUM_SENSORS-1] - ambientReading[servoAngle][NUM_SENSORS-1];
+        float b = sensorValues[NUM_SENSORS-2] - ambientReading[servoAngle][NUM_SENSORS-2];
+        return NUM_SENSORS-1 - a/(a+b);
     }
 
-    // Compare neighbors of strongest sensor
+    // Parabolic interpolation:
     size_t left = strongest - 1;
     size_t right = strongest + 1;
-
-    if (sensorValues[left] > sensorValues[right]) {
-
-        // Interpolate between left and strongest
-        float a = sensorValues[left];
-        float b = sensorValues[strongest];
-
-        return left + b / (a + b);
-    }
-    else {
-
-        // Interpolate between strongest and right
-        float a = sensorValues[strongest];
-        float b = sensorValues[right];
-
-        return strongest + b / (a + b);
-    }
+    float a = sensorValues[left] - ambientReading[servoAngle][left];
+    float b = sensorValues[strongest] - ambientReading[servoAngle][strongest];
+    float c = sensorValues[right] - ambientReading[servoAngle][right];
+    return strongest + (a-b) / (2*a + 2*c -4*b);
 }
 
 
 /**
- * PID controller for servo position; aims to move the ball to TARGET.
+ * PID controller for servo position; aims to move the ball to TARGET. Returns the angle commanded to the servo.
  */
-void servo_PID_move(float position) {
+float servo_PID_move(float position) {
     unsigned long now = micros();
 
     float dt = (now - previousTime) / 1000000.0;
@@ -190,13 +192,20 @@ void servo_PID_move(float position) {
 
     if (dt <= 0.0) {
         // No time delta, not ready to move yet
-        return;
+        return 0;
     }
 
     float error = TARGET - position;
 
     // Integral
     integral += error * dt;
+    //Cap integral so it doesn't accumulate
+    if (integral > 50) {
+        integral = 50;
+    }
+    else if (integral < -50) {
+        integral = -50;
+    }
 
     // Derivative
     float derivative = (error - previousError) / dt;
@@ -221,14 +230,41 @@ void servo_PID_move(float position) {
     Serial.print(position);
     Serial.print("  ");
 
-    // Serial.print("\tError: ");
-    // Serial.print(error);
+    Serial.print("\tError: ");
+    Serial.print(error);
 
-    // Serial.print("\tPID Output: ");
-    // Serial.print(output);
+    Serial.print("\tPID Output: ");
+    Serial.print(output);
 
-    // Serial.print("\tServo: ");
-    // Serial.println(servoCommand);
+    Serial.print("\tServo: ");
+    Serial.println(servoCommand);
+
+    return servoCommand;
+}
+
+void calibrate_phototransistors(int (*ambientValues)[NUM_SENSORS], char* text) {    
+    Serial.println(text);
+    Serial.println("Press Q to begin phototransistor calibration");
+    while(1) {
+        if (Serial.available() > 0) {
+            char input = Serial.read();
+            if (input == 'q' || input == 'Q') {
+                break;
+            }
+        }
+    }
+
+    for (int angle=(int)servoMin; angle<(int)servoMax; angle++) {
+        servo.write((int)angle);
+        delay(100);
+        // Read once into sensorValues[]
+        read_sensor_values();
+
+        // Copy sensorValues[] into ambientReading[] array
+        for (int i=0; i<NUM_SENSORS; i++) {
+            ambientValues[(int)angle][i] = sensorValues[i];
+        }
+    }
 }
 
 
@@ -248,6 +284,18 @@ void setup() {
     calibrate_servo_limit(&servoCenter, "Place tha ball between Q4 and Q5, then tilt the platform until it's steady");
     calibrate_servo_limit(&servoMin, "Tilt the platform until the ball quickly rolls toward Q1");
     calibrate_servo_limit(&servoMax, "Tilt the platform until the ball rolls quickly toward Q8");
+
+    calibrate_phototransistors(ambientReading, "Remove ball and let phototransistors calibrate using ambient lighting");
+
+    Serial.print("Input W to start program");
+    while(1) {
+        if (Serial.available() > 0) {
+            char input = Serial.read();
+            if (input == 'w' || input == 'W') {
+                break;
+            }
+        }
+    }
 }
 
 /**
@@ -284,12 +332,13 @@ void tune_PID(float increment) {
     }
 }
 
-
+float prevServoAngle = servoCenter;
 void loop() {
     read_sensor_values();
-    float position = estimate_ball_position();
+    float position = estimate_ball_position(prevServoAngle);
     print_sensor_values();
-    servo_PID_move(position);
+    print_ambient_values(prevServoAngle);
+    prevServoAngle = servo_PID_move(position);
     tune_PID(0.2);
 
     delay(50);
