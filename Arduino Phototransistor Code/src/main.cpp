@@ -25,9 +25,9 @@ float previousError = 0.0;
 unsigned long previousTime = 0;
 
 /* Servo Parameters */
-float servoCenter = 135;
+float servoCenter = 136;
 float servoMin = 110;
-float servoMax = 145;
+float servoMax = 157;
 
 /* Phototransistor params - Store a ambient calibration for every valid servo angle*/
 int ambientReading[360][NUM_SENSORS] = {0};
@@ -254,7 +254,7 @@ void calibrate_phototransistors(int (*ambientValues)[NUM_SENSORS], char* text) {
         }
     }
 
-    for (int angle=(int)servoMin; angle<(int)servoMax; angle++) {
+    for (int angle=(int)servoMin; angle<=(int)servoMax; angle++) {
         servo.write((int)angle);
         delay(100);
         // Read once into sensorValues[]
@@ -335,9 +335,9 @@ void tune_PID(float increment) {
 float prevServoAngle = servoCenter;
 void loop() {
     read_sensor_values();
-    float position = estimate_ball_position(prevServoAngle);
+    float position = estimate_ball_position((int)prevServoAngle);
     print_sensor_values();
-    print_ambient_values(prevServoAngle);
+    print_ambient_values((int)prevServoAngle);
     prevServoAngle = servo_PID_move(position);
     tune_PID(0.2);
 
