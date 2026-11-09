@@ -10,15 +10,15 @@ const int pinB = A1;
 const int pinC = A2;
 const int analog_in = A3;
 
-uint16_t sensorValues[NUM_SENSORS];
+int sensorValues[NUM_SENSORS];
 
 Servo servo;
 const int SERVO_PIN = 5;
 
 /* PID parameters */
-float Kp = 5.0;
+float Kp = 6.0;
 float Ki = 1.0;
-float Kd = 3.0;
+float Kd = 2.0;
 
 float integral = 0.0;
 float previousError = 0.0;
@@ -104,6 +104,21 @@ void print_ambient_values(int servoAngle) {
     Serial.println();
 }
 
+/**
+ * Prints ambient values - sensor values at certain angle
+ */
+void print_normalized_values(int servoAngle) {
+    for (size_t sensor = 0; sensor < NUM_SENSORS; sensor++) {
+        Serial.print(sensorValues[sensor] - ambientReading[servoAngle][sensor]);
+
+        if (sensor < NUM_SENSORS - 1) {
+            Serial.print('\t');
+        }
+    }
+
+    Serial.println();
+}
+
 
 /**
  * Reads one value from a selected mux channel.
@@ -151,8 +166,8 @@ float estimate_ball_position(int servoAngle) {
 
     // Find strongest sensor
     size_t strongest = 0;
-    for (size_t i = 1; i < NUM_SENSORS; i++) {
-        if (sensorValues[i] > sensorValues[strongest]) {
+    for (size_t i = 0; i < NUM_SENSORS; i++) {
+        if (sensorValues[i]-ambientReading[servoAngle][i] > sensorValues[strongest]-ambientReading[servoAngle][strongest]) {
             strongest = i;
         }
     }
@@ -161,14 +176,18 @@ float estimate_ball_position(int servoAngle) {
     if (strongest == 0) {
         float a = sensorValues[0] - ambientReading[servoAngle][0];
         float b = sensorValues[1] - ambientReading[servoAngle][1];
-        return b/(b+a);
+        float ans = b/(b+a);
+        if (ans < 0) return 0;
+        return ans;
     }
 
     // Handle right edge
     if (strongest == NUM_SENSORS - 1) {
         float a = sensorValues[NUM_SENSORS-1] - ambientReading[servoAngle][NUM_SENSORS-1];
         float b = sensorValues[NUM_SENSORS-2] - ambientReading[servoAngle][NUM_SENSORS-2];
-        return NUM_SENSORS-1 - a/(a+b);
+        float ans = NUM_SENSORS-1 - b/(a+b);
+        if (ans > NUM_SENSORS - 1) return NUM_SENSORS-1;
+        return ans;
     }
 
     // Parabolic interpolation:
@@ -177,7 +196,7 @@ float estimate_ball_position(int servoAngle) {
     float a = sensorValues[left] - ambientReading[servoAngle][left];
     float b = sensorValues[strongest] - ambientReading[servoAngle][strongest];
     float c = sensorValues[right] - ambientReading[servoAngle][right];
-    return strongest + (a-b) / (2*a + 2*c -4*b);
+    return strongest + (a-c) / (2*a + 2*c - 4*b);
 }
 
 
@@ -200,11 +219,11 @@ float servo_PID_move(float position) {
     // Integral
     integral += error * dt;
     //Cap integral so it doesn't accumulate
-    if (integral > 50) {
-        integral = 50;
+    if (integral > 30) {
+        integral = 30;
     }
-    else if (integral < -50) {
-        integral = -50;
+    else if (integral < -30) {
+        integral = -30;
     }
 
     // Derivative
@@ -336,8 +355,9 @@ float prevServoAngle = servoCenter;
 void loop() {
     read_sensor_values();
     float position = estimate_ball_position((int)prevServoAngle);
-    print_sensor_values();
-    print_ambient_values((int)prevServoAngle);
+    //print_sensor_values();
+    //print_ambient_values((int)prevServoAngle);
+    print_normalized_values((int)prevServoAngle);
     prevServoAngle = servo_PID_move(position);
     tune_PID(0.2);
 
