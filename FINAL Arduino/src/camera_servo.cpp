@@ -54,30 +54,35 @@ void servoInit() {
 /*!
  *  @brief  Sets the servo angle for a given servo 
  *  @param  num Servo PWM number from 0 to 15
- *  @param  angle Angle of the servo in degrees
+ *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
  */
-void setServoAngle(uint8_t num, float angle)
+void setServoAngle(uint8_t num, float angle_rel_horiz)
 {
+    float angle_servo = 0;
     switch (num) {
         case SERVO_A:
-            angle = constrain(angle, SERVO_A_MIN, SERVO_A_MAX);
+            angle_servo = angle_rel_horiz + SERVO_A_HORIZ;
+            angle_servo = constrain(angle_servo, SERVO_A_MIN, SERVO_A_MAX);
             break;
         case SERVO_B:
-            angle = constrain(angle, SERVO_B_MIN, SERVO_B_MAX);
+            angle_servo = angle_rel_horiz + SERVO_B_HORIZ;
+            angle_servo = constrain(angle_servo, SERVO_B_MIN, SERVO_B_MAX);
             break;
         case SERVO_C:
-            angle = constrain(angle, SERVO_C_MIN, SERVO_C_MAX);
+            angle_servo = angle_rel_horiz + SERVO_C_HORIZ;
+            angle_servo = constrain(angle_servo, SERVO_C_MIN, SERVO_C_MAX);
             break;
         default:
             return;
     }
 
-    float pulselength_us = 1000000/(float)SERVO_FREQ;
-    float pulse_us = (angle/(float)SERVO_RANGE)*pulselength_us;
+    float period_us = 1000000/(float)SERVO_FREQ;
+    float duty = (angle_servo/(float)SERVO_RANGE)*(SERVO_MAX_DUTY-SERVO_MIN_DUTY) + SERVO_MIN_DUTY;
+    float pulse_us = duty*period_us;
     servo_drive.writeMicroseconds(num,pulse_us);
 }
 
 void setTilt(float thetax, float thetay) { //Sets platform angle relative to neutral position
-
+    
 }
 

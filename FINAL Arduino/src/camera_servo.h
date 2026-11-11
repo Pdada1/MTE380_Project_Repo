@@ -6,6 +6,8 @@
 #include <Wire.h>
 
 #define SERVO_FREQ 50 // Analog servos run at ~50 Hz updates
+#define SERVO_MIN_DUTY 0.5/20
+#define SERVO_MAX_DUTY 2.5/20
 #define SERVO_RANGE 180
 #define SERVO_A 0
 #define SERVO_B 1
@@ -13,14 +15,13 @@
 
 #define SERVO_A_MIN 0 // Servo limits
 #define SERVO_A_MAX 180
+#define SERVO_A_HORIZ 90 // Horizontal position (linkage parallel to gnd)
 #define SERVO_B_MIN 0
 #define SERVO_B_MAX 180
+#define SERVO_B_HORIZ 90
 #define SERVO_C_MIN 0
 #define SERVO_C_MAX 180
-
-#define SERVO_A_NEUT 90 // Neutral positions (platform parralel to gnd)
-#define SERVO_B_NEUT 90
-#define SERVO_C_NEUT 90
+#define SERVO_C_HORIZ 90
 
 #define SHIELD_ADDR 0x40
 
@@ -43,9 +44,9 @@ void servoInit();
 /*!
  *  @brief  Sets the servo angle for a given servo 
  *  @param  num Servo PWM number from 0 to 15
- *  @param  angle Angle of the servo in degrees
+ *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
  */
-void setServoAngle(uint8_t num, float angle);
+void setServoAngle(uint8_t num, float angle_rel_horiz);
 
 void setTilt(float thetax, float thetay);
 
