@@ -8,7 +8,7 @@
 #define KD 1
 #define I_LIMIT 10
 
-float get_xtilt_PID(BallData* ball_data);
-float get_ytilt_PID(BallData* ball_data);
+float pid_get_xtilt(BallData* ball_data);
+float pid_get_ytilt(BallData* ball_data);
 
 #endif

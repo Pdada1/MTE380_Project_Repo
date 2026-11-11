@@ -23,7 +23,6 @@
 #define SERVO_C_NEUT 90
 
 #define SHIELD_ADDR 0x40
-Adafruit_PWMServoDriver servo_drive;
 
 #define CAMERA_SAMPLES 10
 
@@ -38,6 +37,8 @@ struct BallData { //Struct to keep track of all relevant ball data
 bool camera_data_ready();
 
 void camera_read_data(BallData* ball_data);
+
+void servoInit();
 
 /*!
  *  @brief  Sets the servo angle for a given servo 

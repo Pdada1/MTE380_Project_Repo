@@ -1,5 +1,7 @@
 #include "camera_servo.h"
 
+Adafruit_PWMServoDriver servo_drive;
+
 bool camera_data_ready() { //Reads until after the first "bob"
     bool data_ready = false;
 
@@ -40,6 +42,13 @@ void camera_read_data(BallData* ball_data) { //Assumes camera data is ready
 
     //Get time of sample
     ball_data->t[CAMERA_SAMPLES-1] = millis()/(float)1000;
+}
+
+void servoInit() {
+    servo_drive = Adafruit_PWMServoDriver(SHIELD_ADDR);
+    servo_drive.begin();
+    servo_drive.setOscillatorFrequency(27000000);
+    servo_drive.setPWMFreq(SERVO_FREQ);  // Analog servos run at ~50 Hz updates
 }
 
 /*!
