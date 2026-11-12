@@ -1,0 +1,7 @@
+name: mte_380_env
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - py-opencv
+  - pyserial

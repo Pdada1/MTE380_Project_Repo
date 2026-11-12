@@ -1,0 +1,54 @@
+{
+  "camera": {
+    "index": 1,
+    "frame_width": 640,
+    "frame_height": 480
+  },
+  "ball_detection": {
+    "lower_hsv": [
+      12,
+      163,
+      164
+    ],
+    "upper_hsv": [
+      25,
+      239,
+      206
+    ],
+    "min_radius_px": 5
+  },
+  "calibration": {
+    "origin_px": [
+      307.447324087723,
+      262.2417346048554
+    ],
+    "platform_radius_px": 196.4970569933701,
+    "zero_degree_servo": 0
+  },
+  "servos": [
+    {
+      "index": 0,
+      "point_px": [
+        182,
+        111
+      ],
+      "pin": 19
+    },
+    {
+      "index": 1,
+      "point_px": [
+        212,
+        434
+      ],
+      "pin": 20
+    },
+    {
+      "index": 2,
+      "point_px": [
+        503,
+        243
+      ],
+      "pin": 21
+    }
+  ]
+}
