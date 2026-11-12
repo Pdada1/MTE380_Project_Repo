@@ -11,12 +11,22 @@ conda env create -f environment.yml
 conda activate mte_380_env
 ```
 
-The camera index is `1` and the serial port is `COM3`. Both are set in `helper.py`. If the camera fails to open, check the index and close any other app using the camera.
+The camera index is `1` in `helper.py`. The Arduino serial port is `COM6` in `track_ball.py`. If the camera fails to open, check the index and close any other app using the camera.
 
 1. Run `python calibrate.py` with the platform level. Click a few spots on the ball to sample its color, then press **C**. Press **R** during color sampling to clear the samples.
 2. Click the three servo attachment points in pin order **19, 20, 21**. Press **U** to undo a point or **S** to save the calibration to `config.json`.
 3. Run `python track_ball.py --preview` to check detection and the coordinate system without serial. The target starts at the center. Click anywhere in the preview to set a new target, press **C** to recenter, or press **Q** to quit.
-4. Run `python track_ball.py` to stream measurements over serial. Closed-loop operation requires Arduino firmware that reads the packet below. The existing `servo_controller` sketch is for the earlier single-servo setup.
+4. Run `python track_ball.py` to stream measurements to the Arduino. The firmware in `servo_controller` decodes packets and runs the PID after enough valid samples arrive. `setTilt()` is still a placeholder.
+
+### Check Arduino reception
+
+Close Arduino Serial Monitor or PlatformIO Device Monitor, then run:
+
+```powershell
+python track_ball.py --serial-debug
+```
+
+The tracker sends packets and prints the Arduino's debug output through the same connection. With the ball detected, look for `Data valid!` and the decoded `x`, `y`, `xr`, and `yr` values. If opening `COM6` returns `Access is denied`, close any other tracker or serial monitor and retry.
 
 ## Stage 1 — Calibration
 
@@ -38,9 +48,9 @@ Tracking sends one 23-byte binary packet per frame at 115200 baud. The pin order
 
 | Byte offset | Field | Encoding |
 | --- | --- | --- |
-| 0–2 | Sync | `0x0B 0x00 0x0B` |
-| 3–5 | Servo pins, starting at +X and going counterclockwise | Three unsigned bytes |
-| 6–21 | Ball X, ball Y, target X, target Y | Four little-endian 32-bit floats |
-| 22 | Ball valid | Unsigned byte, 1 if detected and 0 otherwise |
+| 0-2 | Sync | `0x0B 0x00 0x0B` |
+| 3 | Ball valid | Unsigned byte, 1 if detected and 0 otherwise |
+| 4-6 | Servo pins, starting at +X and going counterclockwise | Three unsigned bytes |
+| 7-22 | Ball X, ball Y, target X, target Y | Four little-endian 32-bit floats |
 
 When the ball is lost, the packet still includes the pins and target. Ball X and Y are set to zero, and the validity byte distinguishes a lost ball from one at the center.

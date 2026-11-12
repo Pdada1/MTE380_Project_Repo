@@ -1,6 +1,7 @@
 """Track the ball and send normalized positions over USB serial.
 
 Run python track_ball.py to transmit, or use --preview to run without serial.
+Use --serial-debug to monitor the Arduino's print statements as well.
 Click to set the target, press C to center it, or press Q to quit.
 """
 
@@ -11,18 +12,18 @@ import time
 
 import cv2
 
-from helper import CONFIG_PATH, SERIAL_PORT, SERVO_PINS, BallDetector, Platform, draw_ball, open_camera
+from helper import CONFIG_PATH, SERVO_PINS, BallDetector, Platform, draw_ball, open_camera
 
 SYNC = bytes((0x0B, 0x00, 0x0B))
 PACKET = struct.Struct("<3sB3B4f")
+ARDUINO_SERIAL_PORT = "COM6"
 BAUD_RATE = 115200
 WINDOW = "Platform Tracking"
-
 
 def open_serial():
     import serial
 
-    port = serial.Serial(SERIAL_PORT, BAUD_RATE, write_timeout=0.1)
+    port = serial.Serial(ARDUINO_SERIAL_PORT, BAUD_RATE, write_timeout=0.1)
     try:
         time.sleep(2)  # Allow boards that reset on serial open to boot.
     except BaseException:
@@ -57,7 +58,7 @@ def draw_preview(frame, platform, detection, target_px, ball, target):
     cv2.imshow(WINDOW, frame)
 
 
-def track(camera, platform, detector, frame_size, port):
+def track(camera, platform, detector, port, serial_debug=False):
     """
     Continuously keep track of the ball in the video frame,
     while showing previews of where the ball is and where we
@@ -89,6 +90,12 @@ def track(camera, platform, detector, frame_size, port):
         ball = platform.normalize(detection[0]) if detection is not None else None
         if port is not None:
             port.write(tracking_packet(platform.pins, ball, target))
+            if serial_debug:
+                # Print the Arduino's serial print statements for debugging,
+                # while keeping only one serial port open.
+                output = port.read_all()
+                if output:
+                    print(output.decode("ascii", errors="replace"), end="", flush=True)
 
         draw_preview(frame, platform, detection, target_px, ball, target)
 
@@ -102,6 +109,7 @@ def track(camera, platform, detector, frame_size, port):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--preview", action="store_true", help="Run without serial.")
+    parser.add_argument("--serial-debug", action="store_true", help="Print Arduino serial output.")
     args = parser.parse_args()
 
     # Read the config.json parameters for use during tracking
@@ -123,11 +131,11 @@ def main():
     try:
         if args.preview:
             # Run as preview, with no transmission to Arduino
-            track(camera, platform, detector, frame_size, None)
+            track(camera, platform, detector, None)
         else:
             # Run full algorithm with transmission to Arduino
             with open_serial() as port:
-                track(camera, platform, detector, frame_size, port)
+                track(camera, platform, detector, port, args.serial_debug)
     finally:
         camera.release()
         cv2.destroyAllWindows()

@@ -9,7 +9,6 @@ import cv2
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 CAMERA_INDEX = 1
-SERIAL_PORT = "COM3"
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 SERVO_PINS = (19, 20, 21)

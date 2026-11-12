@@ -6,47 +6,47 @@
   },
   "ball_detection": {
     "lower_hsv": [
-      12,
-      163,
-      164
+      11,
+      141,
+      162
     ],
     "upper_hsv": [
       25,
-      239,
-      206
+      243,
+      223
     ],
     "min_radius_px": 5
   },
   "calibration": {
     "origin_px": [
-      307.447324087723,
-      262.2417346048554
+      382.4715449986069,
+      246.4000417943717
     ],
-    "platform_radius_px": 196.4970569933701,
+    "platform_radius_px": 213.3734179537492,
     "zero_degree_servo": 0
   },
   "servos": [
     {
       "index": 0,
       "point_px": [
-        182,
-        111
+        312,
+        45
       ],
       "pin": 19
     },
     {
       "index": 1,
       "point_px": [
-        212,
-        434
+        200,
+        357
       ],
       "pin": 20
     },
     {
       "index": 2,
       "point_px": [
-        503,
-        243
+        590,
+        296
       ],
       "pin": 21
     }
