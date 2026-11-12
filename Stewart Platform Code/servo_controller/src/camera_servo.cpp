@@ -2,25 +2,27 @@
 
 Adafruit_PWMServoDriver servo_drive;
 
-bool camera_data_ready() { //Reads until after the first "bob"1
+bool camera_data_ready() { //Reads until after the first B0B1
     bool data_ready = false;
 
     int bytes_available = Serial.available();
     char char_frame[4] = {0};
-    if (bytes_available >= 7+4*sizeof(float)) { //"bob"1 + 3 bytes + 4 floats
+    if (bytes_available >= 7+4*sizeof(float)) { //B0B1 + 3 bytes + 4 floats
         for (int i=0; i<bytes_available-(3+4*sizeof(float)); i++) { //Always leave at least 3 bytes + 4 floats in serial buffer
-            char_frame[0] = char_frame[1]; //Track frame of 4 chars to check for bob1
+            char_frame[0] = char_frame[1]; //Track frame of 4 chars to check for B0B1
             char_frame[1] = char_frame[2];
             char_frame[2] = char_frame[3];
             char_frame[3] = Serial.read();
 
-            if (char_frame[0] == 'b' && char_frame[1] == 'o' && char_frame[2] == 'b' && char_frame[3] == 1) {
+            if (char_frame[0] == 0x0B && char_frame[1] == 0x00 && char_frame[2] == 0x0B && char_frame[3] == 1) {
                 //Ball position valid
+                Serial.println("Data valid!");
                 data_ready = true;
                 break;
             }
-            else if (char_frame[0] == 'b' && char_frame[1] == 'o' && char_frame[2] == 'b' && char_frame[3] == 0) {
+            else if (char_frame[0] == 0x0B && char_frame[1] == 0x00 && char_frame[2] == 0x0B && char_frame[3] == 0) {
                 //Ball position invalid
+                Serial.println("Data INVALID :(");
             }
         }
     }
