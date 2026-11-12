@@ -17,6 +17,7 @@
 #define L_1 66
 #define L_11 80
 #define L_12 94
+#define PLANE_ANGLE_MAX 20
 
 
 

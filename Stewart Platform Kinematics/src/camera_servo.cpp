@@ -79,9 +79,21 @@ void setServoAngle(uint8_t num, float angle)
 
 void setTilt(float thetax, float thetay) { //Sets platform angle relative to neutral position
 
+    // Limit plane angle to max of plus/minus 20 deg
+    if (thetax > PLANE_ANGLE_MAX)
+        thetax = PLANE_ANGLE_MAX;
+    else if (thetax < -PLANE_ANGLE_MAX)
+        thetax = -PLANE_ANGLE_MAX;
+
+    if (thetay > PLANE_ANGLE_MAX)
+        thetay = PLANE_ANGLE_MAX;
+    else if (thetay < -PLANE_ANGLE_MAX)
+        thetay = -PLANE_ANGLE_MAX;
+
+
 
     // normal vector
-    float n[3] = {sin(thetax), sin(thetay), 0};
+    float n[3] = {sin(thetax*PI/180), sin(thetay*PI/180), 0};
     n[2] = sqrt(1 - pow(n[0],2) - pow(n[1],2) ); 
     // setting up the z-component of the normal this way allows 
     // for the input angle to translate 1:1 to the plane angle
@@ -97,20 +109,18 @@ void setTilt(float thetax, float thetay) { //Sets platform angle relative to neu
     float temp2 = -(n[0]*n[1])/temp1;
 
     float e1[3] = {
-        pow(n[0],2)*(1-temp1), 
+        1 - pow(n[0],2)/temp1, 
         temp2, 
         -n[0]
     }; 
     float e2[3] = {
         temp2, 
-        pow(n[1],2)*(1-temp1), 
+        1 - pow(n[1],2)/temp1, 
         -n[1]
     }; 
 
     const float STOT = sqrt(3)/2;
 
-
-    
     // Vectors representing the offsets from the center of the platform to the pivot points 
     float p1[3] = {
         S*e2[0], 
@@ -163,9 +173,9 @@ void setTilt(float thetax, float thetay) { //Sets platform angle relative to neu
         sqrt(pow(d[1], 2) + pow(X2[2], 2)),
         sqrt(pow(d[2], 2) + pow(X3[2], 2))
     };
-    float theta1 = atan2(X1[2], d[0]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[0],2))/(2*L_11*D[0]));
-    float theta2 = atan2(X2[2], d[1]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[1],2))/(2*L_11*D[1]));
-    float theta3 = atan2(X3[2], d[2]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[2],2))/(2*L_11*D[2]));
+    float theta1 = (atan2(X1[2], d[0]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[0],2))/(2*L_11*D[0])))*180/PI;
+    float theta2 = (atan2(X2[2], d[1]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[1],2))/(2*L_11*D[1])))*180/PI;
+    float theta3 = (atan2(X3[2], d[2]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[2],2))/(2*L_11*D[2])))*180/PI;
 
     // debug
     Serial.print("theta1: ");
