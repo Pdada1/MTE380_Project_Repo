@@ -50,6 +50,17 @@ void camera_read_data(BallData* ball_data) { //Assumes camera data is ready
 
     //Get time of sample
     ball_data->t[CAMERA_SAMPLES-1] = millis()/(float)1000;
+
+    //Logging
+    Serial.print(F("pins A/B/C: "));
+    Serial.print((int)ball_data->servo_A_pin);  Serial.print('/');
+    Serial.print((int)ball_data->servo_B_pin);  Serial.print('/');
+    Serial.print((int)ball_data->servo_C_pin);
+
+    Serial.print(F("  x="));  Serial.print(ball_data->x[CAMERA_SAMPLES-1], 2);
+    Serial.print(F(" y="));   Serial.print(ball_data->y[CAMERA_SAMPLES-1], 2);
+    Serial.print(F(" xr="));  Serial.print(ball_data->xr[CAMERA_SAMPLES-1], 2);
+    Serial.print(F(" yr="));  Serial.println(ball_data->yr[CAMERA_SAMPLES-1], 2);
 }
 
 void servoInit() {
