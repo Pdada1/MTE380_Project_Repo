@@ -14,7 +14,7 @@ import cv2
 from helper import CONFIG_PATH, SERIAL_PORT, SERVO_PINS, BallDetector, Platform, draw_ball, open_camera
 
 SYNC = bytes((0x0B, 0x00, 0x0B))
-PACKET = struct.Struct("<3s3B4fB")
+PACKET = struct.Struct("<3sB3B4f")
 BAUD_RATE = 115200
 WINDOW = "Platform Tracking"
 
@@ -39,7 +39,7 @@ def tracking_packet(pins, ball, target):
     valid = ball is not None
     if not valid:
         ball = (0.0, 0.0)
-    return PACKET.pack(SYNC, *pins, *ball, *target, valid)
+    return PACKET.pack(SYNC, valid, *pins, *ball, *target)
 
 
 def draw_preview(frame, platform, detection, target_px, ball, target):
@@ -84,7 +84,7 @@ def track(camera, platform, detector, frame_size, port):
                 port.write(tracking_packet(platform.pins, None, target))
             raise RuntimeError("Camera stopped returning frames")
 
-        # Find the ball using BallDetector, normalize its locaiton, then write the packet to Arduino
+        # Find the ball using BallDetector, normalize its location, then write the packet to Arduino
         detection = detector.detect(frame)
         ball = platform.normalize(detection[0]) if detection is not None else None
         if port is not None:
