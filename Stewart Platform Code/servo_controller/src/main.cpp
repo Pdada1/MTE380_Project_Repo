@@ -21,7 +21,7 @@ void loop() {
         if (num_samples >= CAMERA_SAMPLES) {
             float thetax = pid_get_xtilt(&ballData);
             float thetay = pid_get_ytilt(&ballData);
-            setTilt(thetax, thetay);
+            setTilt(thetax, thetay, &ballData);
         }
     }
 }
