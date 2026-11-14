@@ -10,6 +10,9 @@ void setup() {
 
     //Servo init
     servoInit();
+
+    //Reset platform
+    setTilt(0, 0, &ballData);
 }
 
 void loop() {

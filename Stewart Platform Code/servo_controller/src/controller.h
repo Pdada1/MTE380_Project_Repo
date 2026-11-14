@@ -4,8 +4,8 @@
 #include "camera_servo.h"
 
 #define KP 1
-#define KI 1
-#define KD 1
+#define KI 0
+#define KD 0
 #define I_LIMIT 10
 
 float pid_get_xtilt(BallData* ball_data);
