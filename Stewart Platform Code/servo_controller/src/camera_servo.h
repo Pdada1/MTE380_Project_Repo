@@ -20,6 +20,14 @@
 #define SERVO_C_MIN 57.5
 #define SERVO_C_HORIZ 108.0
 
+// stewart platform dimensions 
+#define S 140 // distance from center of platform to pivot point
+#define H 100 // height of center point from origin (constrained to be a constant)
+#define L_1 66
+#define L_11 80
+#define L_12 94
+#define PLANE_ANGLE_MAX 20
+
 #define SHIELD_ADDR 0x40
 
 #define CAMERA_SAMPLES 10
