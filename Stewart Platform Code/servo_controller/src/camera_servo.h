@@ -12,7 +12,7 @@
 
 #define SERVO_A_MAX 119.0 // Link touches ground
 #define SERVO_A_MIN 47.0 //Links are straight
-#define SERVO_A_HORIZ 100.0 // Horizontal position (linkage parallel to gnd)
+#define SERVO_A_HORIZ 102.0 // Horizontal position (linkage parallel to gnd)
 #define SERVO_B_MAX 131.0
 #define SERVO_B_MIN 65.5
 #define SERVO_B_HORIZ 113.0

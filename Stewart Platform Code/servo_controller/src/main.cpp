@@ -10,9 +10,6 @@ void setup() {
 
     //Servo init
     servoInit();
-
-    //Reset platform
-    setTilt(0, 0, &ballData);
 }
 
 void loop() {
@@ -25,6 +22,10 @@ void loop() {
             float thetax = pid_get_xtilt(&ballData);
             float thetay = pid_get_ytilt(&ballData);
             setTilt(thetax, thetay, &ballData);
+            
+            Serial.print(thetax);
+            Serial.print(' ');
+            Serial.println(thetay);
         }
     }
 }

@@ -26,7 +26,7 @@ float e_av(BallData* ball_data, char axis) {
     //Average position over latest POS_SAMPLES
     float sum = 0;
     for (int i=CAMERA_SAMPLES-POS_SAMPLES; i<CAMERA_SAMPLES; i++) {
-        sum += xr[i] - x[i];
+        sum += x[i] - xr[i];
     }
     return sum/POS_SAMPLES;
 }
@@ -51,7 +51,7 @@ float de_av(BallData* ball_data, char axis) {
     float ex[VEL_SAMPLES] = {0};
     float t[VEL_SAMPLES] = {0};
     for (int i=0; i<VEL_SAMPLES; i++) {
-        ex[i] = xr[CAMERA_SAMPLES-VEL_SAMPLES+i] - x[CAMERA_SAMPLES-VEL_SAMPLES+i];
+        ex[i] = x[CAMERA_SAMPLES-VEL_SAMPLES+i] - xr[CAMERA_SAMPLES-VEL_SAMPLES+i];
         t[i] = ball_data->t[CAMERA_SAMPLES-VEL_SAMPLES+i] - ball_data->t[0]; //Use difference to keep numbers from getting large for LinearFit
     }
 
@@ -69,12 +69,12 @@ float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 
     float dt = ball_data->t[CAMERA_SAMPLES-1] - ball_data->t[CAMERA_SAMPLES-2];
     switch (axis) {
         case 'x':
-            e = ball_data->xr[CAMERA_SAMPLES-1] - ball_data->x[CAMERA_SAMPLES-1];
+            e = ball_data->x[CAMERA_SAMPLES-1] - ball_data->xr[CAMERA_SAMPLES-1];
             int_ex += e*dt;
             int_ex = constrain(int_ex, -I_LIMIT, I_LIMIT);
             return int_ex;
         case 'y':
-            e = ball_data->yr[CAMERA_SAMPLES-1] - ball_data->y[CAMERA_SAMPLES-1];
+            e = ball_data->y[CAMERA_SAMPLES-1] - ball_data->yr[CAMERA_SAMPLES-1];
             int_ey += e*dt;
             int_ey = constrain(int_ey, -I_LIMIT, I_LIMIT);
             return int_ey;
