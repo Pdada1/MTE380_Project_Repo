@@ -209,8 +209,8 @@ void setTilt(float thetax, float thetay, BallData* ball_data) { //Sets platform 
     Serial.print("theta3: ");
     Serial.println(theta3);
 
-    setServoAngle(ball_data->servo_A_pin, theta1, ball_data);
-    setServoAngle(ball_data->servo_B_pin, theta2, ball_data);
-    setServoAngle(ball_data->servo_C_pin, theta3, ball_data);
+    setServoAngle('A', theta1, ball_data);
+    setServoAngle('B', theta2, ball_data);
+    setServoAngle('C', theta3, ball_data);
 }
 
