@@ -1,18 +1,75 @@
+
 #include "camera_servo.h"
 #include "controller.h"
 
 BallData ballData; //Ball data to be fed to the controller (x,y,t,xr,yr)
 uint16_t num_samples = 0;
 
+//#define CALIBRATE_SERVOS /* Uncomment to enable manual servo calibration mode */
+
+#ifdef CALIBRATE_SERVOS
+Adafruit_PWMServoDriver servo_drive2;
+int curr_angle1 = SERVO_A_HORIZ;
+int curr_angle2 = SERVO_B_HORIZ;
+int curr_angle3 = SERVO_C_HORIZ;
+
+
+/*!
+ *  @brief  Sets the servo angle for a given servo 
+ *  @param  servo Servo number 'A'/'B'/'C'
+ *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
+ *  @param  ball_data ballData struct
+ */
+void setServoAngleManual(uint8_t servo_num, float angle_servo)
+{
+    angle_servo = constrain(angle_servo, 0.0f, (float)SERVO_RANGE);
+
+    float pulse_us = 500.0f +
+        (angle_servo / (float)SERVO_RANGE) * 2000.0f;
+
+    servo_drive2.writeMicroseconds(servo_num, (uint16_t)pulse_us);
+}
+#endif
+
 void setup() {
     //Laptop + camera init
     Serial.begin(115200);
 
     //Servo init
+#ifdef CALIBRATE_SERVOS
+    servo_drive2 = Adafruit_PWMServoDriver(SHIELD_ADDR);
+    servo_drive2.begin();
+    servo_drive2.setOscillatorFrequency(27000000);
+    servo_drive2.setPWMFreq(SERVO_FREQ);  // Analog servos run at ~50 Hz updates
+#else
     servoInit();
+#endif
 }
 
 void loop() {
+#ifdef CALIBRATE_SERVOS
+    if (Serial.available() > 0) {
+        char key = Serial.read();
+        if (key == 'q') curr_angle1 = constrain(curr_angle1 + 1, 0, SERVO_RANGE);
+        if (key == 'a') curr_angle1 = constrain(curr_angle1 - 1, 0, SERVO_RANGE);
+        if (key == 'w') curr_angle2 = constrain(curr_angle2 + 1, 0, SERVO_RANGE);
+        if (key == 's') curr_angle2 = constrain(curr_angle2 - 1, 0, SERVO_RANGE);
+        if (key == 'e') curr_angle3 = constrain(curr_angle3 + 1, 0, SERVO_RANGE);
+        if (key == 'd') curr_angle3 = constrain(curr_angle3 - 1, 0, SERVO_RANGE);
+    }
+
+    setServoAngleManual(8, curr_angle1);
+    setServoAngleManual(9, curr_angle2);
+    setServoAngleManual(10, curr_angle3);
+
+    Serial.print(curr_angle1);
+    Serial.print(' ');
+    Serial.print(curr_angle2);
+    Serial.print(' ');
+    Serial.println(curr_angle3);
+    delay(50);
+
+#else
     if (camera_data_ready()) {
         camera_read_data(&ballData);
         num_samples++;
@@ -28,4 +85,5 @@ void loop() {
             Serial.println(thetay);
         }
     }
+#endif
 }

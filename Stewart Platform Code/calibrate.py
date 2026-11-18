@@ -2,7 +2,7 @@
 
 import json
 import math
-
+import numpy as np
 import cv2
 
 from helper import CAMERA_INDEX, CONFIG_PATH, SERVO_PINS, BallDetector, Platform, draw_ball, open_camera
@@ -56,9 +56,6 @@ class Calibration:
         if self.status == "Selecting Ball":
             # Calibration stage A: sample the ball
             self.sample_ball_color(x, y)
-        elif self.platform is None:
-            # Calibration stage B: draw the platform using the servo locations
-            self.select_servo_point(x, y)
 
     def sample_ball_color(self, x, y):
         """
@@ -79,29 +76,74 @@ class Calibration:
             upper.append(max(old_high, min(limit, int(sample_high) + margin)))
         self.detector = BallDetector(lower, upper, MIN_BALL_RADIUS)
 
-    def select_servo_point(self, x, y):
-        """
-        Helper function to select each servo location and save it.
-        Fits a circle around those points to define the circular platform.
-        """
-        self.points.append((x, y))
-        if len(self.points) == 3:
-            try:
-                origin, radius = fit_circle(self.points)
-            except ValueError:
-                self.points.pop()
-                print("Servo points must be distinct and non-collinear. Select again.")
+
+    def select_servo_point(self):
+        """Detect the three RGB squares and fit the platform circle."""
+        hsv = cv2.cvtColor(self.frame, cv2.COLOR_BGR2HSV)
+
+        ranges = [
+            [(0, 100, 70), (10, 255, 255)],    # Red
+            [(35, 70, 50), (85, 255, 255)],    # Green
+            [(95, 70, 50), (135, 255, 255)],   # Blue
+        ]
+
+        points = []
+
+        for i, (lower, upper) in enumerate(ranges):
+            mask = cv2.inRange(hsv, lower, upper)
+
+            if i == 0:
+                mask |= cv2.inRange(hsv, (170, 100, 70), (179, 255, 255))
+
+            contours, _ = cv2.findContours(
+                mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+
+            candidates = []
+
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                (cx, cy), radius = cv2.minEnclosingCircle(contour)
+
+                # Look for small colored squares, not large reflections
+                if not 10 <= area <= 250 or not 2 <= radius <= 12:
+                    continue
+
+                x, y, w, h = cv2.boundingRect(contour)
+
+                # Reject long, thin objects
+                if not 0.5 <= w / h <= 2.0:
+                    continue
+
+                candidates.append((area, (int(cx), int(cy))))
+
+            if not candidates:
                 return
-            self.platform = Platform(origin, radius, self.points)
+
+            points.append(max(candidates)[1])
+
+        # Reject points that cannot define the expected platform geometry
+        distances = [
+            math.dist(points[i], points[(i + 1) % 3])
+            for i in range(3)
+        ]
+
+        if min(distances) < 50 or max(distances) > 1.8 * min(distances):
+            return
+
+        try:
+            origin, radius = fit_circle(points)
+        except ValueError:
+            return
+
+        self.points = points
+        self.platform = Platform(origin, radius, points)
 
     def draw(self):
         preview = self.frame.copy()
         if self.platform is not None:
             self.platform.draw(preview)
-            message = "S: save | U: undo | Q: quit"
-        elif self.status == "Selecting Platform":
-            pin = SERVO_PINS[len(self.points)]
-            message = f"Phase B: Click servo on pin {pin} | U: undo | Q: quit"
+            message = "S: save | D: Re-detect | Q: quit"
         else:
             message = "Phase A: Click ball to sample | C: continue | R: reset | Q: quit"
 
@@ -155,6 +197,9 @@ def main():
             ok, calibration.frame = camera.read()
             if not ok:
                 raise RuntimeError("Camera stopped returning frames")
+
+            if calibration.status == "Selecting Platform" and calibration.platform is None:
+                calibration.select_servo_point()
             cv2.imshow(WINDOW, calibration.draw())
 
             key = cv2.waitKey(1) & 0xFF
@@ -167,8 +212,8 @@ def main():
             if key == ord("r") and calibration.status == "Selecting Ball":
                 # Reset the ball sampler
                 calibration.detector = None
-            if key == ord("u") and calibration.points:
-                # Undo most recent servo point placement
+            if key == ord("d") and calibration.points:
+                # Re-detect the servo points
                 calibration.points.pop()
                 calibration.platform = None
             if key == ord("s") and calibration.platform is not None:

@@ -1,8 +1,8 @@
 #include "controller.h"
 #include "LinearFit.h" //SimpleRegression library
 
-#define POS_SAMPLES (int)(CAMERA_SAMPLES/3) //3 samples
-#define VEL_SAMPLES (int)(CAMERA_SAMPLES/1.4) //7 samples
+#define POS_SAMPLES (int)(1) //1 sample
+#define VEL_SAMPLES (int)(2) //2 samples
 
 float int_ex = 0;
 float int_ey = 0;
@@ -33,15 +33,12 @@ float e_av(BallData* ball_data, char axis) {
 
 float de_av(BallData* ball_data, char axis) {
     float* x;
-    float* xr;
     switch (axis) {
         case 'x':
             x = ball_data->x;
-            xr = ball_data->xr;
             break;
         case 'y':
             x = ball_data->y;
-            xr = ball_data->yr;
             break;
         default:
             return 0;
@@ -51,7 +48,7 @@ float de_av(BallData* ball_data, char axis) {
     float ex[VEL_SAMPLES] = {0};
     float t[VEL_SAMPLES] = {0};
     for (int i=0; i<VEL_SAMPLES; i++) {
-        ex[i] = x[CAMERA_SAMPLES-VEL_SAMPLES+i] - xr[CAMERA_SAMPLES-VEL_SAMPLES+i];
+        ex[i] = x[CAMERA_SAMPLES-VEL_SAMPLES+i]; // originally subtracted xr here too, but that caused setpoint kick, so now its just x
         t[i] = ball_data->t[CAMERA_SAMPLES-VEL_SAMPLES+i] - ball_data->t[0]; //Use difference to keep numbers from getting large for LinearFit
     }
 
