@@ -3,8 +3,8 @@
 
 #include "camera_servo.h"
 
-#define KP 3.8
-#define KI 0.2
+#define KP 4.0
+#define KI 0.4
 #define KD 3.0
 #define I_LIMIT 1.5
 
