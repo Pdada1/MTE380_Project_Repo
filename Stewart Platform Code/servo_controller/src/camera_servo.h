@@ -10,8 +10,9 @@
 #define SERVO_MAX_DUTY 2.5/20
 #define SERVO_RANGE 180
 
-
-// max was reduced by 5 arbitrarily
+// Servo A: index 0 (as labelled on platform)
+// Servo B: index 2
+// Servo C: index 1
 #define SERVO_A_MAX 125.0 // Link touches ground
 #define SERVO_A_MIN 50.0 //Links are straight
 #define SERVO_A_HORIZ 107.0 // Horizontal position (linkage parallel to gnd)
