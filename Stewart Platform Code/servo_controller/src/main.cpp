@@ -5,7 +5,7 @@
 BallData ballData; //Ball data to be fed to the controller (x,y,t,xr,yr)
 uint16_t num_samples = 0;
 
-//#define CALIBRATE_SERVOS /* Uncomment to enable manual servo calibration mode */
+// #define CALIBRATE_SERVOS /* Uncomment to enable manual servo calibration mode */
 
 #ifdef CALIBRATE_SERVOS
 Adafruit_PWMServoDriver servo_drive2;
@@ -58,9 +58,9 @@ void loop() {
         if (key == 'd') curr_angle3 = constrain(curr_angle3 - 1, 0, SERVO_RANGE);
     }
 
-    setServoAngleManual(8, curr_angle1);
-    setServoAngleManual(9, curr_angle2);
-    setServoAngleManual(10, curr_angle3);
+    setServoAngleManual(0, curr_angle1);
+    setServoAngleManual(2, curr_angle2);
+    setServoAngleManual(1, curr_angle3);
 
     Serial.print(curr_angle1);
     Serial.print(' ');
@@ -80,9 +80,9 @@ void loop() {
             float thetay = pid_get_ytilt(&ballData);
             setTilt(thetax, thetay, &ballData);
             
-            Serial.print(thetax);
-            Serial.print(' ');
-            Serial.println(thetay);
+            // Serial.print(thetax);
+            // Serial.print(' ');
+            // Serial.println(thetay);
         }
     }
 #endif

@@ -16,13 +16,13 @@ bool camera_data_ready() { //Reads until after the first B0B1
 
             if (char_frame[0] == 0x0B && char_frame[1] == 0x00 && char_frame[2] == 0x0B && char_frame[3] == 1) {
                 //Ball position valid
-                Serial.println("Data valid!");
+                // Serial.println("Data valid!");
                 data_ready = true;
                 break;
             }
             else if (char_frame[0] == 0x0B && char_frame[1] == 0x00 && char_frame[2] == 0x0B && char_frame[3] == 0) {
                 //Ball position invalid
-                Serial.println("Data INVALID :(");
+                // Serial.println("Data INVALID :(");
             }
         }
     }
@@ -54,15 +54,15 @@ void camera_read_data(BallData* ball_data) { //Assumes camera data is ready
     ball_data->t[CAMERA_SAMPLES-1] = millis()/(float)1000;
 
     //Logging
-    Serial.print(F("pins A/B/C: "));
-    Serial.print((int)ball_data->servo_A_pin);  Serial.print('/');
-    Serial.print((int)ball_data->servo_B_pin);  Serial.print('/');
-    Serial.print((int)ball_data->servo_C_pin);
+    // Serial.print(F("pins A/B/C: "));
+    // Serial.print((int)ball_data->servo_A_pin);  Serial.print('/');
+    // Serial.print((int)ball_data->servo_B_pin);  Serial.print('/');
+    // Serial.print((int)ball_data->servo_C_pin);
 
-    Serial.print(F("  x="));  Serial.print(ball_data->x[CAMERA_SAMPLES-1], 2);
-    Serial.print(F(" y="));   Serial.print(ball_data->y[CAMERA_SAMPLES-1], 2);
-    Serial.print(F(" xr="));  Serial.print(ball_data->xr[CAMERA_SAMPLES-1], 2);
-    Serial.print(F(" yr="));  Serial.println(ball_data->yr[CAMERA_SAMPLES-1], 2);
+    // Serial.print(F("  x="));  Serial.print(ball_data->x[CAMERA_SAMPLES-1], 2);
+    // Serial.print(F(" y="));   Serial.print(ball_data->y[CAMERA_SAMPLES-1], 2);
+    // Serial.print(F(" xr="));  Serial.print(ball_data->xr[CAMERA_SAMPLES-1], 2);
+    // Serial.print(F(" yr="));  Serial.println(ball_data->yr[CAMERA_SAMPLES-1], 2);
 }
 
 void servoInit() {
@@ -202,12 +202,12 @@ void setTilt(float thetax, float thetay, BallData* ball_data) { //Sets platform 
     float theta3 = (atan2(X3[2], d[2]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[2],2))/(2*L_11*D[2])))*180/PI;
 
     // debug
-    Serial.print("theta1: ");
-    Serial.println(theta1);
-    Serial.print("theta2: ");
-    Serial.println(theta2);
-    Serial.print("theta3: ");
-    Serial.println(theta3);
+    // Serial.print("theta1: ");
+    // Serial.println(theta1);
+    // Serial.print("theta2: ");
+    // Serial.println(theta2);
+    // Serial.print("theta3: ");
+    // Serial.println(theta3);
 
     setServoAngle('A', theta1, ball_data);
     setServoAngle('B', theta2, ball_data);

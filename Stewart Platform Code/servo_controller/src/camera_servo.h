@@ -12,15 +12,15 @@
 
 
 // max was reduced by 5 arbitrarily
-#define SERVO_A_MAX 118.0 // Link touches ground
-#define SERVO_A_MIN 40.0 //Links are straight
-#define SERVO_A_HORIZ 105.0 // Horizontal position (linkage parallel to gnd)
-#define SERVO_B_MAX 105.0
-#define SERVO_B_MIN 38.0
-#define SERVO_B_HORIZ 93.0
+#define SERVO_A_MAX 125.0 // Link touches ground
+#define SERVO_A_MIN 50.0 //Links are straight
+#define SERVO_A_HORIZ 107.0 // Horizontal position (linkage parallel to gnd)
+#define SERVO_B_MAX 117.0
+#define SERVO_B_MIN 58.0
+#define SERVO_B_HORIZ 103.0
 #define SERVO_C_MAX 108.0
-#define SERVO_C_MIN 40.0
-#define SERVO_C_HORIZ 90.0
+#define SERVO_C_MIN 34.0
+#define SERVO_C_HORIZ 91.0
 
 // stewart platform dimensions 
 #define S 140 // distance from center of platform to pivot point
@@ -32,7 +32,7 @@
 
 #define SHIELD_ADDR 0x40
 
-#define CAMERA_SAMPLES 3
+#define CAMERA_SAMPLES 1
 
 struct BallData { //Struct to keep track of all relevant ball data
     float x[CAMERA_SAMPLES] = {0}; //ordered old measurements -> new measurements

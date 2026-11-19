@@ -11,7 +11,7 @@ CONFIG_PATH = Path(__file__).with_name("config.json")
 CAMERA_INDEX = 0
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
-SERVO_PINS = (8, 9, 10)
+SERVO_PINS = (0, 2, 1) # corresponds to servo indices 0, 2, and 1
 
 
 def open_camera():
