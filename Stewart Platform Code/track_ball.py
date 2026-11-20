@@ -43,15 +43,12 @@ def open_serial():
     return port
 
 
-def tracking_packet(pins, ball, target):
+def tracking_packet(pins, ball, target, status = 0):
     """
     Pack sync, three CCW servo pins, ball XY, target XY, and ball validity
     for transmission to the Arduino.
     """
-    valid = ball is not None
-    if not valid:
-        ball = (0.0, 0.0)
-    return PACKET.pack(SYNC, valid, *pins, *ball, *target)
+    return PACKET.pack(SYNC, status, *pins, *ball, *target)
 
 
 def make_trajectory(platform, start_px, shape):
@@ -91,7 +88,7 @@ def make_trajectory(platform, start_px, shape):
         raise NotImplementedError("Only circles and triangles are supported for now")
 
 
-def draw_preview(frame, platform, detection, target_px, ball, target, path):
+def draw_preview(frame, platform, detection, target_px, ball, target, path, mode):
     """Display the platform, ball, target, and desired trajectory."""
     platform.draw(frame)
     draw_ball(frame, detection)
@@ -103,9 +100,22 @@ def draw_preview(frame, platform, detection, target_px, ball, target, path):
     status += f"   Target ({target[0]:.2f}, {target[1]:.2f})"
     cv2.putText(frame, status, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                 (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(frame, "Click: target | O: circle | T: triangle | C: center | Q: quit",
+    cv2.putText(frame, "Click: target | O: circle | T: triangle | C: center | L: level | F: frequency response | Q: quit",
                 (10, frame.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
                 (255, 255, 255), 1, cv2.LINE_AA)
+    # Show active level or frequency response mode in the top-right
+    if mode in (2, 3):
+        label = "LEVEL ACTIVE" if mode == 2 else "FREQ RESPONSE ACTIVE"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.5
+        thickness = 1
+        (text_width, text_height), baseline = cv2.getTextSize(label, font, scale, thickness)
+        right = frame.shape[1] - 10
+        top = 38
+        cv2.rectangle(frame, (right - text_width - 16, top),
+                      (right, top + text_height + baseline + 12), (0, 100, 180), -1)
+        cv2.putText(frame, label, (right - text_width - 8, top + text_height + 6),
+                    font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
     cv2.imshow(WINDOW, frame)
 
 
@@ -117,11 +127,13 @@ def track(camera, platform, detector, port, serial_debug=False):
     segment_distance = 0.0
     previous_time = time.monotonic()
     shape = None
+    mode = 0  # Normal tracking; 2 = level, 3 = frequency response
 
     def select_target(event, x, y, flags, param):
         # Gather user mouse input to determine target location from frame
-        nonlocal target_px, path, shape
+        nonlocal target_px, path, shape, mode
         if event == cv2.EVENT_LBUTTONDOWN:
+            mode = 0
             target_px = (x, y)
             path = []
             shape = None
@@ -137,9 +149,9 @@ def track(camera, platform, detector, port, serial_debug=False):
         previous_time = now
         target = platform.normalize(target_px)
         if not ok:
-            # Write default packet so Arduino is aware that the camera isn't returning frames
+            # Write ball-lost packet so Arduino is aware that the camera isn't returning frames
             if port is not None:
-                port.write(tracking_packet(platform.pins, None, target))
+                port.write(tracking_packet(platform.pins, (0.0, 0.0), target, 0))
             raise RuntimeError("Camera stopped returning frames")
 
         # Find the ball using BallDetector, normalize its location, then write the packet to Arduino
@@ -190,7 +202,10 @@ def track(camera, platform, detector, port, serial_debug=False):
                 target = platform.normalize(target_px)
 
         if port is not None:
-            port.write(tracking_packet(platform.pins, ball, target))
+            # Keep level or frequency response active until another mode is selected
+            status = mode if mode else (1 if ball is not None else 0)
+            packet_ball = ball if ball is not None else (0.0, 0.0)
+            port.write(tracking_packet(platform.pins, packet_ball, target, status))
             if serial_debug:
                 # Print the Arduino's serial print statements for debugging,
                 # while keeping only one serial port open.
@@ -198,14 +213,16 @@ def track(camera, platform, detector, port, serial_debug=False):
                 if output:
                     print(output.decode("ascii", errors="replace"), end="", flush=True)
 
-        draw_preview(frame, platform, detection, target_px, ball, target, path)
+        draw_preview(frame, platform, detection, target_px, ball, target, path, mode)
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q") or cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
             return
         if key == ord("c"):
+            mode = 0
             target_px, path, shape = platform.origin, [], None
         if key in (ord("o"), ord("t")) and detection is not None:
+            mode = 0
             # Draw a circular or triangular trajectory
             next_shape = "circle" if key == ord("o") else "triangle"
             next_path = make_trajectory(platform, detection[0], next_shape)
@@ -217,6 +234,14 @@ def track(camera, platform, detector, port, serial_debug=False):
                 target_px = path[0]
             else:
                 print(f"Cannot fit this {next_shape} at the ball's current position.")
+        if key == ord("l"):
+            mode = 2
+            path = []
+            shape = None
+        if key == ord("f"):
+            mode = 3
+            path = []
+            shape = None
 
 
 def main():

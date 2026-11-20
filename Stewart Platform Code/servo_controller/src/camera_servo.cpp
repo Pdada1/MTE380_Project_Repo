@@ -2,69 +2,6 @@
 
 Adafruit_PWMServoDriver servo_drive;
 
-bool camera_data_ready() { //Reads until after the first B0B1
-    bool data_ready = false;
-
-    int bytes_available = Serial.available();
-    char char_frame[4] = {0};
-    if (bytes_available >= 7+4*sizeof(float)) { //B0B1 + 3 bytes + 4 floats
-        for (int i=0; i<bytes_available-(3+4*sizeof(float)); i++) { //Always leave at least 3 bytes + 4 floats in serial buffer
-            char_frame[0] = char_frame[1]; //Track frame of 4 chars to check for B0B1
-            char_frame[1] = char_frame[2];
-            char_frame[2] = char_frame[3];
-            char_frame[3] = Serial.read();
-
-            if (char_frame[0] == 0x0B && char_frame[1] == 0x00 && char_frame[2] == 0x0B && char_frame[3] == 1) {
-                //Ball position valid
-                // Serial.println("Data valid!");
-                data_ready = true;
-                break;
-            }
-            else if (char_frame[0] == 0x0B && char_frame[1] == 0x00 && char_frame[2] == 0x0B && char_frame[3] == 0) {
-                //Ball position invalid
-                // Serial.println("Data INVALID :(");
-            }
-        }
-    }
-    return data_ready;
-}
-
-void camera_read_data(BallData* ball_data) { //Assumes camera data is ready
-    //Shift BallData array by one
-    for (int i=0; i<CAMERA_SAMPLES-1; i++) {
-        ball_data->x[i] = ball_data->x[i+1];
-        ball_data->y[i] = ball_data->y[i+1];
-        ball_data->xr[i] = ball_data->xr[i+1];
-        ball_data->yr[i] = ball_data->yr[i+1];
-        ball_data->t[i] = ball_data->t[i+1];
-    }
-
-    //Empty serial buffer, leaving the last valid measurement in ballData
-    do {
-        ball_data->servo_A_pin = Serial.read();
-        ball_data->servo_B_pin = Serial.read();
-        ball_data->servo_C_pin = Serial.read();
-        Serial.readBytes((uint8_t*)&ball_data->x[CAMERA_SAMPLES-1], sizeof(float));
-        Serial.readBytes((uint8_t*)&ball_data->y[CAMERA_SAMPLES-1], sizeof(float));
-        Serial.readBytes((uint8_t*)&ball_data->xr[CAMERA_SAMPLES-1], sizeof(float));
-        Serial.readBytes((uint8_t*)&ball_data->yr[CAMERA_SAMPLES-1], sizeof(float));
-    } while (camera_data_ready());
-
-    //Get time of sample
-    ball_data->t[CAMERA_SAMPLES-1] = millis()/(float)1000;
-
-    //Logging
-    // Serial.print(F("pins A/B/C: "));
-    // Serial.print((int)ball_data->servo_A_pin);  Serial.print('/');
-    // Serial.print((int)ball_data->servo_B_pin);  Serial.print('/');
-    // Serial.print((int)ball_data->servo_C_pin);
-
-    // Serial.print(F("  x="));  Serial.print(ball_data->x[CAMERA_SAMPLES-1], 2);
-    // Serial.print(F(" y="));   Serial.print(ball_data->y[CAMERA_SAMPLES-1], 2);
-    // Serial.print(F(" xr="));  Serial.print(ball_data->xr[CAMERA_SAMPLES-1], 2);
-    // Serial.print(F(" yr="));  Serial.println(ball_data->yr[CAMERA_SAMPLES-1], 2);
-}
-
 void servoInit() {
     servo_drive = Adafruit_PWMServoDriver(SHIELD_ADDR);
     servo_drive.begin();
@@ -73,7 +10,22 @@ void servoInit() {
 }
 
 /*!
- *  @brief  Sets the servo angle for a given servo 
+ *  @brief  Sets the servo angle for a given servo to a specific angle
+ *  @param  servo_num Servo number
+ *  @param  angle_servo Servo angle in degrees
+ */
+void setServoAngleManual(uint8_t servo_num, float angle_servo)
+{
+    angle_servo = constrain(angle_servo, 0.0f, (float)SERVO_RANGE);
+
+    float pulse_us = 500.0f +
+        (angle_servo / (float)SERVO_RANGE) * 2000.0f;
+
+    servo_drive.writeMicroseconds(servo_num, (uint16_t)pulse_us);
+}
+
+/*!
+ *  @brief  Sets the servo angle for a given servo relative to the platform
  *  @param  servo Servo number 'A'/'B'/'C'
  *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
  *  @param  ball_data ballData struct

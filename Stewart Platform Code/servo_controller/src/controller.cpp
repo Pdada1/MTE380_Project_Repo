@@ -85,7 +85,23 @@ float pid_get_tilt(BallData* ball_data, char axis) { //Gets tilt for axis 'x' or
     float int_e = inte(ball_data, axis);
     float d_e = de_av(ball_data, axis);
 
-    float u = e*KP + int_e*KI + d_e*KD;
+    float p = e * KP;
+    float d = d_e * KD;
+    float u = p + int_e * KI + d;
+
+    // Debug every 10 control updates
+    // static int count = 0;
+    // if (axis == 'x' && ++count >= 10) {
+    //     count = 0;
+
+    //     Serial.print("P: ");
+    //     Serial.print(p, 3);
+    //     Serial.print(" D: ");
+    //     Serial.print(d, 3);
+    //     Serial.print(" U: ");
+    //     Serial.println(u, 3);
+    // }
+
     return u;
 }
 

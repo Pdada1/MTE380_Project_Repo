@@ -2,52 +2,78 @@
 #include "camera_servo.h"
 #include "controller.h"
 
-BallData ballData; //Ball data to be fed to the controller (x,y,t,xr,yr)
+BallData ballData; // Ball data to be fed to the controller (x,y,t,xr,yr)
 uint16_t num_samples = 0;
 
+#define SYNC_BYTES 3
+#define PACKET_SIZE_BYTES 23
+const uint8_t SYNC_WORD[SYNC_BYTES] = {0x0B, 0x00, 0x0B};
+
 // #define CALIBRATE_SERVOS /* Uncomment to enable manual servo calibration mode */
+// #define SWEEP_SERVOS /* Uncomment to enable automatic servo sweep mode */
 
-#ifdef CALIBRATE_SERVOS
-Adafruit_PWMServoDriver servo_drive2;
-int curr_angle1 = SERVO_A_HORIZ;
-int curr_angle2 = SERVO_B_HORIZ;
-int curr_angle3 = SERVO_C_HORIZ;
+struct CameraPacket {
+    uint8_t status;
+    uint8_t servo_A_pin;
+    uint8_t servo_B_pin;
+    uint8_t servo_C_pin;
+    float x;
+    float y;
+    float xr;
+    float yr;
+};
 
+bool read_serial_port(CameraPacket *packet) {
+    static uint8_t buf[PACKET_SIZE_BYTES] = {0};
+    static size_t buf_count = 0;
 
-/*!
- *  @brief  Sets the servo angle for a given servo 
- *  @param  servo Servo number 'A'/'B'/'C'
- *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
- *  @param  ball_data ballData struct
- */
-void setServoAngleManual(uint8_t servo_num, float angle_servo)
-{
-    angle_servo = constrain(angle_servo, 0.0f, (float)SERVO_RANGE);
+    while (Serial.available() > 0) {
+        buf[buf_count++] = (uint8_t)Serial.read();
 
-    float pulse_us = 500.0f +
-        (angle_servo / (float)SERVO_RANGE) * 2000.0f;
+        if (buf_count >= SYNC_BYTES &&
+            memcmp(buf, SYNC_WORD, SYNC_BYTES) != 0) {
+            // Sync word not valid, shift buffer by one byte
+            memmove(buf, buf + 1, --buf_count);
+            continue;
+        }
 
-    servo_drive2.writeMicroseconds(servo_num, (uint16_t)pulse_us);
+        if (buf_count < PACKET_SIZE_BYTES) {
+            // Packet incomplete, continue building it
+            continue;
+        }
+
+        // Packet complete, extract it
+        packet->status = buf[SYNC_BYTES];
+        packet->servo_A_pin = buf[SYNC_BYTES + 1];
+        packet->servo_B_pin = buf[SYNC_BYTES + 2];
+        packet->servo_C_pin = buf[SYNC_BYTES + 3];
+
+        size_t offset = SYNC_BYTES + 4;
+
+        memcpy(&packet->x, buf + offset, sizeof(float));
+        offset += sizeof(float);
+
+        memcpy(&packet->y, buf + offset, sizeof(float));
+        offset += sizeof(float);
+
+        memcpy(&packet->xr, buf + offset, sizeof(float));
+        offset += sizeof(float);
+
+        memcpy(&packet->yr, buf + offset, sizeof(float));
+
+        // Ready to receive next packet
+        buf_count = 0;
+        return true;
+    }
+
+    return false;
 }
-#endif
 
-void setup() {
-    //Laptop + camera init
-    Serial.begin(115200);
+void run_servo_calibration(void) {
+    static int curr_angle1 = SERVO_A_HORIZ;
+    static int curr_angle2 = SERVO_B_HORIZ;
+    static int curr_angle3 = SERVO_C_HORIZ;
 
-    //Servo init
-#ifdef CALIBRATE_SERVOS
-    servo_drive2 = Adafruit_PWMServoDriver(SHIELD_ADDR);
-    servo_drive2.begin();
-    servo_drive2.setOscillatorFrequency(27000000);
-    servo_drive2.setPWMFreq(SERVO_FREQ);  // Analog servos run at ~50 Hz updates
-#else
-    servoInit();
-#endif
-}
-
-void loop() {
-#ifdef CALIBRATE_SERVOS
     if (Serial.available() > 0) {
         char key = Serial.read();
         if (key == 'q') curr_angle1 = constrain(curr_angle1 + 1, 0, SERVO_RANGE);
@@ -68,22 +94,192 @@ void loop() {
     Serial.print(' ');
     Serial.println(curr_angle3);
     delay(50);
+}
 
-#else
-    if (camera_data_ready()) {
-        camera_read_data(&ballData);
-        num_samples++;
+void run_servo_sweep(void) {
+    BallData sweep_data = {}; // Local ball data, no camera required
 
-        //Only run controller after ballData buffers have filled
-        if (num_samples >= CAMERA_SAMPLES) {
-            float thetax = pid_get_xtilt(&ballData);
-            float thetay = pid_get_ytilt(&ballData);
-            setTilt(thetax, thetay, &ballData);
-            
-            // Serial.print(thetax);
-            // Serial.print(' ');
-            // Serial.println(thetay);
-        }
+    // Set servo pins
+    sweep_data.servo_A_pin = 0;
+    sweep_data.servo_B_pin = 2;
+    sweep_data.servo_C_pin = 1;
+
+    const int SWEEP_ANGLE = 15;
+    const int SWEEP_DELAY = 100;
+
+    // Start with platform level
+    setTilt(0, 0, &sweep_data);
+    delay(1000);
+
+    // Sweep X: 0 -> -15 -> +15 -> 0
+    for (int angle = 0; angle >= -SWEEP_ANGLE; angle--) {
+        setTilt(angle, 0, &sweep_data);
+        delay(SWEEP_DELAY);
+    }
+    for (int angle = -SWEEP_ANGLE + 1; angle <= SWEEP_ANGLE; angle++) {
+        setTilt(angle, 0, &sweep_data);
+        delay(SWEEP_DELAY);
+    }
+    for (int angle = SWEEP_ANGLE - 1; angle >= 0; angle--) {
+        setTilt(angle, 0, &sweep_data);
+        delay(SWEEP_DELAY);
+    }
+
+    delay(500);
+
+    // Sweep Y: 0 -> -15 -> +15 -> 0
+    for (int angle = 0; angle >= -SWEEP_ANGLE; angle--) {
+        setTilt(0, angle, &sweep_data);
+        delay(SWEEP_DELAY);
+    }
+    for (int angle = -SWEEP_ANGLE + 1; angle <= SWEEP_ANGLE; angle++) {
+        setTilt(0, angle, &sweep_data);
+        delay(SWEEP_DELAY);
+    }
+    for (int angle = SWEEP_ANGLE - 1; angle >= 0; angle--) {
+        setTilt(0, angle, &sweep_data);
+        delay(SWEEP_DELAY);
+    }
+
+    // Finish with platform level
+    setTilt(0, 0, &sweep_data);
+}
+
+void test_servo_response() {
+    const float angles1[3] = {
+        SERVO_A_HORIZ,
+        SERVO_B_HORIZ,
+        SERVO_C_HORIZ
+    };
+
+    const float angles2[3] = {
+        SERVO_A_MAX,
+        SERVO_B_MAX,
+        SERVO_C_MAX
+    };
+
+    const float angles3[3] = {
+        SERVO_A_MIN,
+        SERVO_B_MIN,
+        SERVO_C_MIN
+    };
+
+    const uint8_t pins[3] = {0, 2, 1};
+
+    for (int i = 0; i < 3; i++) {
+        setServoAngleManual(pins[i], angles1[i]);
+    }
+    delay(1000);
+
+    for (int i = 0; i < 3; i++) {
+        setServoAngleManual(pins[i], angles2[i]);
+    }
+    delay(1000);
+
+    for (int i = 0; i < 3; i++) {
+        setServoAngleManual(pins[i], angles3[i]);
+    }
+    delay(1000);
+}
+
+void setup() {
+    Serial.begin(115200);
+    servoInit();
+
+#ifdef SWEEP_SERVOS
+    while (1) {
+        run_servo_sweep();
+        test_servo_response();
     }
 #endif
+
+#ifdef CALIBRATE_SERVOS
+    while (1) {
+        run_servo_calibration();
+    }
+#endif
+}
+
+void loop() {
+    CameraPacket curr_packet;
+    CameraPacket latest_packet;
+    bool new_data = false;
+    bool level_platform = false;
+
+    // Empty serial buffer, keeping the latest valid measurement
+    while (read_serial_port(&curr_packet)) {
+        switch (curr_packet.status) {
+            case 0x00:
+                // Ball not in frame, do nothing
+                break;
+
+            case 0x01:
+                // Ball data valid, keep latest measurement
+                latest_packet = curr_packet;
+                new_data = true;
+                level_platform = false;
+                break;
+
+            case 0x02:
+                // Set platform to 'level' state
+                new_data = false;
+                level_platform = true;
+                break;
+
+            case 0x03:
+                // Run frequency response for motor autotuning
+                break;
+
+            default:
+                // Invalid status, do nothing
+                break;
+        }
+    }
+
+    if (level_platform) {
+        // Set platform to neutral position
+        setTilt(0, 0, &ballData);
+        return;
+    }
+
+    if (!new_data) {
+        // No new camera measurement
+        return;
+    }
+
+    // Shift existing camera samples to make room for next one
+    for (int i = 0; i < CAMERA_SAMPLES - 1; i++) {
+        ballData.x[i] = ballData.x[i + 1];
+        ballData.y[i] = ballData.y[i + 1];
+        ballData.xr[i] = ballData.xr[i + 1];
+        ballData.yr[i] = ballData.yr[i + 1];
+        ballData.t[i] = ballData.t[i + 1];
+    }
+
+    // Store latest camera measurement
+    ballData.status = latest_packet.status;
+    ballData.servo_A_pin = latest_packet.servo_A_pin;
+    ballData.servo_B_pin = latest_packet.servo_B_pin;
+    ballData.servo_C_pin = latest_packet.servo_C_pin;
+
+    ballData.x[CAMERA_SAMPLES - 1] = latest_packet.x;
+    ballData.y[CAMERA_SAMPLES - 1] = latest_packet.y;
+    ballData.xr[CAMERA_SAMPLES - 1] = latest_packet.xr;
+    ballData.yr[CAMERA_SAMPLES - 1] = latest_packet.yr;
+    ballData.t[CAMERA_SAMPLES - 1] = millis() / 1000.0f;
+
+    // Only run controller after ballData buffers have filled
+    if (num_samples < CAMERA_SAMPLES) {
+        num_samples++;
+    }
+
+    if (num_samples >= CAMERA_SAMPLES) {
+        float thetax = pid_get_xtilt(&ballData);
+        float thetay = pid_get_ytilt(&ballData);
+        setTilt(thetax, thetay, &ballData);
+
+        // Serial.print(thetax);
+        // Serial.print(' ');
+        // Serial.println(thetay);
+    }
 }

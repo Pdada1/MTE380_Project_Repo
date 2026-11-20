@@ -3,10 +3,10 @@
 
 #include "camera_servo.h"
 
-#define KP 9.0
-#define KI 0.3
-#define KD 4.8
-#define I_LIMIT 1.0
+#define KP 6.0
+#define KI 0.0
+#define KD 4.5
+#define I_LIMIT 0.5
 
 float pid_get_xtilt(BallData* ball_data);
 float pid_get_ytilt(BallData* ball_data);

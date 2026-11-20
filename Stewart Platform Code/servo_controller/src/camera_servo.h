@@ -13,15 +13,15 @@
 // Servo A: index 0 (as labelled on platform)
 // Servo B: index 2
 // Servo C: index 1
-#define SERVO_A_MAX 125.0 // Link touches ground
-#define SERVO_A_MIN 50.0 //Links are straight
-#define SERVO_A_HORIZ 107.0 // Horizontal position (linkage parallel to gnd)
-#define SERVO_B_MAX 117.0
-#define SERVO_B_MIN 58.0
-#define SERVO_B_HORIZ 103.0
+#define SERVO_A_MAX 126.0 // Link touches ground
+#define SERVO_A_MIN 66.0 //Links are straight
+#define SERVO_A_HORIZ 102.0 // Horizontal position (linkage parallel to gnd)
+#define SERVO_B_MAX 114.0
+#define SERVO_B_MIN 75.0
+#define SERVO_B_HORIZ 99.0
 #define SERVO_C_MAX 108.0
-#define SERVO_C_MIN 34.0
-#define SERVO_C_HORIZ 91.0
+#define SERVO_C_MIN 56.0
+#define SERVO_C_HORIZ 89.0
 
 // stewart platform dimensions 
 #define S 140 // distance from center of platform to pivot point
@@ -33,9 +33,10 @@
 
 #define SHIELD_ADDR 0x40
 
-#define CAMERA_SAMPLES 1
+#define CAMERA_SAMPLES 3 // Do not change without updating other segments of code!!!
 
 struct BallData { //Struct to keep track of all relevant ball data
+    uint8_t status;
     float x[CAMERA_SAMPLES] = {0}; //ordered old measurements -> new measurements
     float y[CAMERA_SAMPLES] = {0};
     float xr[CAMERA_SAMPLES] = {0};
@@ -52,12 +53,8 @@ void camera_read_data(BallData* ball_data);
 
 void servoInit();
 
-/*!
- *  @brief  Sets the servo angle for a given servo 
- *  @param  servo Servo number 'A'/'B'/'C'
- *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
- *  @param  ball_data ballData struct
- */
+void setServoAngleManual(uint8_t servo_num, float angle_servo);
+
 void setServoAngle(char servo, float angle_rel_horiz, BallData* ball_data);
 
 void setTilt(float thetax, float thetay, BallData* ball_data);
