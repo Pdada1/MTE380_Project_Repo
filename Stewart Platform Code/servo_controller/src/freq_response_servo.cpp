@@ -47,15 +47,8 @@ bool wait_for_pc()
     return byte == 0xC;
 }
 
-void setup()
+void run_sweep_X()
 {
-    Serial.begin(115200);
-    servoInit();
-    ball_data.servo_A_pin = SERVO_0_CH;
-    ball_data.servo_B_pin = SERVO_1_CH;
-    ball_data.servo_C_pin = SERVO_2_CH;
-
-    while(!wait_for_pc()){}//start frequency sweep overall
     for(int x=0; x<=(MAX_FREQ-MIN_FREQ)/FREQ_INCREMENT; x+=1)
     {
         float freq_x=MIN_FREQ+x*FREQ_INCREMENT;
@@ -72,8 +65,10 @@ void setup()
             while ((long)(micros() - time_us) < 0) {}
         }
     }
+}
 
-    //need to wait for computer confirmation before starting this. 
+void run_sweep_Y()
+{
     for(int y=0; y<=(MAX_FREQ-MIN_FREQ)/FREQ_INCREMENT; y+=1)
     {
         float freq_y=MIN_FREQ+y*FREQ_INCREMENT;
