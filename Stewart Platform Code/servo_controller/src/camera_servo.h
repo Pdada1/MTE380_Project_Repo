@@ -35,6 +35,7 @@
 
 #define CAMERA_SAMPLES 3 // Do not change without updating other segments of code!!!
 
+
 struct BallData { //Struct to keep track of all relevant ball data
     uint8_t status;
     float x[CAMERA_SAMPLES] = {0}; //ordered old measurements -> new measurements
