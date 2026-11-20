@@ -13,7 +13,7 @@ Reset the platform to level and wait for the computer to tell it to continue?
 #define MAX_FREQ 1.5f       // Hz
 #define MIN_FREQ 0.5f       // Hz
 #define FREQ_INCREMENT 0.1f // Hz
-#define NUM_OSCILLATIONS 5
+#define NUM_OSCILLATIONS 10
 
 #define SERVO_0_CH 8
 #define SERVO_1_CH 10
