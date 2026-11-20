@@ -1,6 +1,7 @@
 
 #include "camera_servo.h"
 #include "controller.h"
+#include "freq_response_servo.h"
 
 BallData ballData; // Ball data to be fed to the controller (x,y,t,xr,yr)
 uint16_t num_samples = 0;
@@ -228,6 +229,9 @@ void loop() {
 
             case 0x03:
                 // Run frequency response for motor autotuning
+                set_motor_pins(curr_packet.servo_A_pin,curr_packet.servo_B_pin,curr_packet.servo_C_pin);
+                run_sweep_X();
+                run_sweep_Y();
                 break;
 
             default:
