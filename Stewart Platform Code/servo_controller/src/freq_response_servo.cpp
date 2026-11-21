@@ -52,6 +52,7 @@ bool wait_for_pc()
     {
     } // block until the PC sends anything
     int byte = Serial.read();
+    Serial.print(byte);
     return byte == PROCEED_CHAR;
 }
 
