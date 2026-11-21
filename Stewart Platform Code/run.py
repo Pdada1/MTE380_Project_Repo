@@ -6,6 +6,7 @@ from queue import Empty
 import time
 import tkinter as tk
 from tkinter import ttk
+from freq_response_log import RunLogger
 
 import cv2
 
@@ -25,7 +26,7 @@ ACTIONS = (
     ("Draw Circle", "Follow a circle starting at the ball.", "start_path", "circle"),
     ("Draw Triangle", "Follow a triangle around the ball.", "start_path", "triangle"),
     ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
-    ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "start_mode", Status.AUTOTUNE),
+    ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "autotune_mode", Status.AUTOTUNE),
     ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
     ("Sweep Platform", "Sweep X and Y once, then hold level.", "start_mode", Status.SWEEP),
     ("Quit", "Close the interface.", "close"),
@@ -99,9 +100,11 @@ class App:
             self.config = {}
             self.notice(f"Calibration could not be loaded: {error}")
         self.hardware = Hardware(args.preview, args.port, args.serial_debug)
+        self.logger = RunLogger()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.bind("<Escape>", lambda event: self.cancel_action())
         self.root.bind("c", lambda event: self.center_target())
+        self.root.bind("<space>", lambda event: self.hardware.proceed.set())
         self.tick()
 
     def build_ui(self):
@@ -277,6 +280,15 @@ class App:
             message += " · preview"
         self.set_action(mode, message)
 
+    def autotune_mode(self):
+        """Select a firmware mode and identify each new hold-level request."""
+        message = "Run the X and Y frequency sweeps, then hold level."
+        if self.preview:
+            message += " · preview"
+
+        # add stuff here    
+        self.set_action(Status.AUTOTUNE, message)
+
     def start_path(self, shape):
         """Start a path from the latest visible ball position if it fits."""
         if (self.tracker.platform is None or self.tracker.detection is None
@@ -323,6 +335,7 @@ class App:
             detector = self.candidate
         if self.tracker.process_frame(now, frame, detector):
             self.set_action(None, "Trajectory complete.")
+        self.logger.on_ball(now, self.tracker.ball)
 
     def show_frame(self):
         """Draw overlays and fit the camera image to the canvas."""
@@ -356,6 +369,13 @@ class App:
 
     def tick(self):
         """Consume camera updates, queue commands, and refresh the displays."""
+        while True:
+            try:
+                t, line = self.hardware.firmware.get_nowait()
+            except Empty:
+                break
+            self.logger.on_line(t, line)
+            
         while True:
             try:
                 source, message = self.hardware.messages.get_nowait()

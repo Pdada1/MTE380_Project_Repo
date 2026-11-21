@@ -75,6 +75,8 @@ class Hardware:
         self.camera_thread = Thread(target=self.capture, daemon=True)
         self.camera_thread.start()
         self.serial_thread = None
+        self.firmware = Queue()
+        self.proceed = Event()
         if not preview:
             self.serial_thread = Thread(target=self.transmit, args=(port_name, debug), daemon=True)
             self.serial_thread.start()
@@ -97,7 +99,7 @@ class Hardware:
                 camera.release()
 
     def transmit(self, port_name, debug):
-        """Send current commands and request level on shutdown."""
+        """Send current commands read Arduino lines, and request level on shutdown."""
         try:
             import serial
 
@@ -105,14 +107,30 @@ class Hardware:
                 # Give the Arduino time to reset after opening the serial port.
                 if self.stop.wait(2):
                     return
+                port.reset_input_buffer()
                 self.messages.put(("serial", f"{port_name} connected"))
                 last_trim = None
                 last_mode_request = None
                 last_level = None
+                rx = b""
                 try:
                     while not self.stop.is_set():
+                        if port.in_waiting:
+                            rx += port.read(port.in_waiting)
+                            *lines, rx = rx.split(b"\n")
+                            for line in lines:
+                                text = line.decode("ascii", errors="replace").strip()
+                                if text:
+                                    self.firmware.put((time.monotonic(), text))
+                                    if debug:
+                                        print(text, flush=True)
+
+                        # Human pressed the "go" key: send PROCEED_CHAR (0x0A in the firmware).
+                        if self.proceed.is_set():
+                            self.proceed.clear()
+                            port.write(b"\x0a")
                         try:
-                            trim, command, last_level, mode_request = self.commands.get(timeout=0.05)
+                            trim, command, last_level, mode_request = self.commands.get(timeout=0.005)
                         except Empty:
                             continue
                         if trim != last_trim:
@@ -122,10 +140,6 @@ class Hardware:
                         if mode_request is None or mode_request != last_mode_request:
                             port.write(command)
                             last_mode_request = mode_request
-                        if debug:
-                            output = port.read_all()
-                            if output:
-                                print(output.decode("ascii", errors="replace"), end="", flush=True)
                 finally:
                     if last_level is not None:
                         port.write(last_level)
@@ -226,7 +240,7 @@ class History:
         while self.samples and self.samples[0][0] < now - HISTORY_SECONDS:
             self.samples.popleft()
 
-    def add(self, now, ball, target):
+    def add(self, now, ball, target, freq=None):
         """Record position error and estimate ball velocity and acceleration."""
         if ball is None:
             self.reset_derivatives()
@@ -246,7 +260,7 @@ class History:
                                          for v, p in zip(velocity, last_velocity))
         self.velocity = (velocity, dt) if velocity is not None else None
         self.previous = now, ball
-        self.samples.append((now, (error, velocity, acceleration)))
+        self.samples.append((now, (error, velocity, acceleration, ball, freq)))
 
 
 class Tracker:
@@ -257,6 +271,7 @@ class Tracker:
         self.frame = self.frame_time = self.detection = None
         self.path = None
         self.history = History()
+        self.ball = None
         # Store editable gains in tenths to match the GUI step size.
         self.trajectory_gains = [round(value * 10) for value in TRAJECTORY_GAINS]
 
@@ -277,6 +292,7 @@ class Tracker:
         if self.platform is None:
             return False
         ball = self.platform.normalize(self.detection[0]) if self.detection is not None else None
+        self.ball = ball
         complete = False
         if self.path is not None and ball is not None:
             self.target, complete = self.path.advance(self.platform, ball, self.target, dt)
