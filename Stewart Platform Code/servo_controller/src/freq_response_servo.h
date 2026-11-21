@@ -9,6 +9,7 @@ enum class Mode {
 };
 extern Mode current_mode; 
 
+void run_sweep(char axis);
 void run_sweep_X();
 void run_sweep_Y();
 void run_sweep_axis(char axis);
