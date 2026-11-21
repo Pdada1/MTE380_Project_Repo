@@ -78,9 +78,12 @@ class Hardware:
         self.serial_thread = None
         self.firmware = Queue()
         self.proceed = Event()
+<<<<<<< HEAD
         self.proceed = Event()
         self.rerun = Event()
         self.abort = Event()
+=======
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
         if not preview:
             self.serial_thread = Thread(target=self.transmit, args=(port_name, debug), daemon=True)
             self.serial_thread.start()
@@ -133,6 +136,7 @@ class Hardware:
                         if self.proceed.is_set():
                             self.proceed.clear()
                             port.write(b"\x0a")
+<<<<<<< HEAD
                         # Redo key: the firmware steps back and offers the previous frequency.
                         if self.rerun.is_set():
                             self.rerun.clear()
@@ -142,6 +146,10 @@ class Hardware:
                             port.write(b"x")
                         try:
                             trim, command, last_level, mode_request, stream = self.commands.get(timeout=0.005)
+=======
+                        try:
+                            trim, command, last_level, mode_request = self.commands.get(timeout=0.005)
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
                         except Empty:
                             continue
                         if trim != last_trim:
@@ -151,8 +159,11 @@ class Hardware:
                         if mode_request is None or mode_request != last_mode_request:
                             port.write(command)
                             last_mode_request = mode_request
+<<<<<<< HEAD
                         if stream is not None:
                             port.write(stream)
+=======
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
                 finally:
                     port.write(b"x")
                     if last_level is not None:
@@ -268,7 +279,11 @@ class History:
                                          for v, p in zip(velocity, last_velocity))
         self.velocity = (velocity, dt) if velocity is not None else None
         self.previous = now, ball
+<<<<<<< HEAD
         self.samples.append((now, (error, velocity, acceleration, freq)))
+=======
+        self.samples.append((now, (error, velocity, acceleration, ball, freq)))
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
 
 
 class Tracker:

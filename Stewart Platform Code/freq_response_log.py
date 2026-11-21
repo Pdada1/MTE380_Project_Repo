@@ -17,9 +17,12 @@ class RunLogger:
         elif parts[0] == "RUN_END" and self.run is not None:
             self.save()
             self.run = None
+<<<<<<< HEAD
         elif parts[0] == "SWEEP_ABORTED":
             self.run = None
             self.rows = []
+=======
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
 
     def on_ball(self, t, ball):
         if self.run is not None and ball is not None:

@@ -7,7 +7,10 @@ import time
 import tkinter as tk
 from tkinter import ttk
 from freq_response_log import RunLogger
+<<<<<<< HEAD
 from freq_response_process import autotune_from_logs
+=======
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
 
 import cv2
 
@@ -28,7 +31,10 @@ ACTIONS = (
     ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),
     ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
     ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "autotune_mode", Status.AUTOTUNE),
+<<<<<<< HEAD
         ("Redo Frequency", "At a prompt, step back to repeat the previous frequency.", "redo_frequency"),
+=======
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
     ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
     ("Sweep Platform", "Sweep X and Y once, then hold level.", "start_mode", Status.SWEEP),
     ("Quit", "Close the interface.", "close"),
@@ -153,7 +159,10 @@ class App:
         self.root.bind("<Escape>", lambda event: self.cancel_action())
         self.root.bind("c", lambda event: self.center_target())
         self.root.bind("<space>", lambda event: self.hardware.proceed.set())
+<<<<<<< HEAD
         self.root.bind("r", lambda event: self.redo_frequency())
+=======
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
         self.tick()
 
     def build_ui(self):
@@ -350,12 +359,18 @@ class App:
             message += " · preview"
         self.set_action(mode, message)
 
+<<<<<<< HEAD
     def autotune_mode(self, mode):
         """Select the autotuning firmware mode and latch onto it."""
+=======
+    def autotune_mode(self):
+        """Select a firmware mode and identify each new hold-level request."""
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
         message = "Run the X and Y frequency sweeps, then hold level."
         if self.preview:
             message += " · preview"
 
+<<<<<<< HEAD
         # This mode latches on, i.e., does not require continuous packets
         self.mode_request_id = (self.mode_request_id + 1) & 0xFFFFFFFF
 
@@ -382,6 +397,10 @@ class App:
         text = " | ".join(parts)
         print("Autotune result ->", text, flush=True)
         self.set_action(None, "Sweep complete. " + text)
+=======
+        # add stuff here    
+        self.set_action(Status.AUTOTUNE, message)
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
 
     def start_path(self, shape):
         """Collect polygon vertices or start a circle from the current ball."""
@@ -512,12 +531,15 @@ class App:
             except Empty:
                 break
             self.logger.on_line(t, line)
+<<<<<<< HEAD
             if line == "SWEEP_DONE":
                 self.show_autotune_result()
             if line == "SWEEP_ABORTED":
                 self.notice("Frequency sweep stopped.")
             if line.startswith("Start Frequency Run"):
                 self.notice(f"{line} Space = go, R = repeat previous.")
+=======
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
             
         while True:
             try:

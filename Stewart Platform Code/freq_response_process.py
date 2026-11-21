@@ -1,6 +1,9 @@
 import numpy as np
 from numpy.polynomial import polynomial as P
+<<<<<<< HEAD
 from pathlib import Path
+=======
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
 
 def fit_sinusoid(t, y, f):
     """
@@ -160,6 +163,7 @@ def zn_pid(Ku, Tu, rule="classic"):
     Ki = Kp / Ti        # = 1.2*Ku/Tu for classic
     Kd = Kp * Td        # = 0.075*Ku*Tu for classic
     return Kp, Ki, Kd
+<<<<<<< HEAD
 
 def load_run(path):
     """Return (freq_hz, amp_deg, t, x, y) from one CSV, or None if it has no data."""
@@ -211,3 +215,5 @@ def autotune_from_logs(folder="freq_logs", n=3, m=0, rule="classic", **kwargs):
         result = ultimate_gain(b, a)
         gains[axis] = zn_pid(result[0], result[1], rule) if result else None
     return gains
+=======
+>>>>>>> 8895781 (Vibe Code. Will try tommorow)
