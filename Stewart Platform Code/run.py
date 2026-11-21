@@ -23,7 +23,7 @@ ACTIONS = (
     ("Calibrate Platform", "Find the red, green, and blue platform markers.", "start_platform_calibration"),
     ("Calibrate Servos", "Hold neutral tilt while you trim each servo.", "start_mode", Status.CALIBRATE_SERVOS),
     ("Draw Circle", "Follow a circle starting at the ball.", "start_path", "circle"),
-    ("Draw Triangle", "Follow a triangle around the ball.", "start_path", "triangle"),
+    ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),
     ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
     ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "start_mode", Status.AUTOTUNE),
     ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
@@ -79,6 +79,7 @@ class App:
         self.config = {}
         self.tracker = Tracker()
         self.action = None
+        self.polygon_points = []
         self.candidate = None
         self.gains = [round(value * 10) for value in DEFAULT_GAINS]
         self.trims = [0, 0, 0]
@@ -140,6 +141,7 @@ class App:
         self.action_controls.grid(row=2, column=0, sticky="ew", pady=(0, 5))
         self.save_button = ttk.Button(self.action_controls, text="Save Calibration", command=self.save_calibration)
         self.reset_button = ttk.Button(self.action_controls, text="Reset Samples", command=self.reset_candidate)
+        self.go_button = ttk.Button(self.action_controls, text="Go", command=self.start_polygon)
         self.cancel_button = ttk.Button(self.action_controls, text="Cancel Action", command=self.cancel_action)
 
         controls = ttk.LabelFrame(middle, text="Controls", padding=8)
@@ -211,16 +213,20 @@ class App:
     def set_action(self, action, message):
         """Switch actions, clear the previous path, and update the controls."""
         self.action = action
+        self.polygon_points.clear()
         self.tracker.path = None
         self.refresh_pid_controls()
         self.candidate = None
-        for button in (self.save_button, self.reset_button, self.cancel_button):
+        for button in (self.save_button, self.reset_button, self.go_button, self.cancel_button):
             button.pack_forget()
         if action in ("ball", "platform"):
             self.save_button.state(["disabled"])
             self.save_button.pack(side="left", padx=(0, 4))
         if action == "ball":
             self.reset_button.pack(side="left", padx=(0, 4))
+        if action == "polygon":
+            self.go_button.state(["disabled"])
+            self.go_button.pack(side="left", padx=(0, 4))
         if action is not None:
             self.cancel_button.pack(side="left")
         self.notice(message)
@@ -278,7 +284,13 @@ class App:
         self.set_action(mode, message)
 
     def start_path(self, shape):
-        """Start a path from the latest visible ball position if it fits."""
+        """Collect polygon vertices or start a circle from the current ball."""
+        if shape == "polygon":
+            if self.tracker.platform is None:
+                self.notice("Calibrate the platform before choosing polygon points.")
+                return
+            self.set_action("polygon", "Click at least three polygon vertices, then press Go.")
+            return
         if (self.tracker.platform is None or self.tracker.detection is None
                 or time.monotonic() - self.tracker.frame_time > 0.25):
             self.notice("Calibrate the platform and bring the ball into view first.")
@@ -307,8 +319,38 @@ class App:
             if math.dist((x, y), self.tracker.platform.origin) > self.tracker.platform.radius:
                 self.notice("Choose a target inside the platform circle.")
                 return
+            if self.action == "polygon":
+                if self.tracker.path is None:
+                    self.add_polygon_point((x, y))
+                return
             self.tracker.target = (x, y)
             self.cancel_action()
+
+    def add_polygon_point(self, point):
+        """Add a vertex without changing the current target."""
+        if point in self.polygon_points:
+            self.notice("Choose a different polygon point.")
+            return
+        self.polygon_points.append(point)
+        count = len(self.polygon_points)
+        if count >= 3:
+            self.go_button.state(["!disabled"])
+            self.notice(f"{count} vertices selected. Add another or press Go.")
+        else:
+            self.notice(f"{count} of 3 minimum vertices selected.")
+
+    def start_polygon(self):
+        """Visit the selected vertices in order and close the polygon."""
+        if self.action != "polygon" or self.tracker.path is not None or len(self.polygon_points) < 3:
+            return
+        (ax, ay), (bx, by), *remaining = self.polygon_points
+        if all((bx - ax) * (y - ay) == (by - ay) * (x - ax) for x, y in remaining):
+            self.notice("Add a vertex off the line before pressing Go.")
+            return
+
+        self.tracker.start_path([*self.polygon_points, self.polygon_points[0]], "polygon")
+        self.go_button.state(["disabled"])
+        self.notice("Following the polygon back to point 1.")
 
     def process_frame(self, now, frame):
         """Update calibration previews and pass the frame to the tracker."""
@@ -334,9 +376,15 @@ class App:
             platform.draw(frame)
             for point, color in zip(platform.servo_points, ((0, 0, 255), (0, 255, 0), (255, 0, 0))):
                 cv2.circle(frame, tuple(point), 4, color, -1)
-        if self.tracker.path is not None:
-            for a, b in zip(self.tracker.path.points, self.tracker.path.points[1:]):
-                cv2.line(frame, tuple(map(round, a)), tuple(map(round, b)), (0, 165, 255), 2)
+        points = self.tracker.path.points if self.tracker.path is not None else self.polygon_points
+        if self.tracker.path is None and len(points) >= 3:
+            points = [*points, points[0]]
+        for a, b in zip(points, points[1:]):
+            cv2.line(frame, tuple(map(round, a)), tuple(map(round, b)), (0, 165, 255), 2)
+        for i, point in enumerate(self.polygon_points, start=1):
+            cv2.circle(frame, point, 5, (0, 165, 255), -1)
+            cv2.putText(frame, str(i), (point[0] + 7, point[1] - 7),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1, cv2.LINE_AA)
         if self.tracker.target is not None and self.action != "platform":
             cv2.drawMarker(frame, tuple(map(round, self.tracker.target)), (0, 255, 0))
         draw_ball(frame, self.tracker.detection)

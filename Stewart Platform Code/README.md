@@ -19,7 +19,8 @@ Use the matching firmware from `servo_controller` to move the platform. Run `pyt
 - **Calibrate Ball**. Click several spots on the ball and select **Save Calibration**. **Reset Samples** clears the pending color samples.
 - **Calibrate Platform**. The camera detects the red, green and blue markers and fits a circle through them. Confirm the outline and select **Save Calibration**. The red marker defines +X with the default configuration. The two camera calibrations update `config.json` independently and take effect immediately.
 - **Calibrate Servos**. Hold neutral tilt and trim the three servos with the controls below the camera. Each click changes the offset by 1° within ±10°. Offsets are applied by physical PWM channel and reset when the interface starts.
-- **Draw Circle** and **Draw Triangle**. Move the target along one path from the current ball position. A path pauses when the ball is lost or falls behind.
+- **Draw Circle**. Move the target around a circle using the circle PID gains.
+- **Draw Polygon**. Click three or more points, then press **Go**. The ball visits them in order and returns to the first using the regular point PID gains. The vertices and edges stay visible until the run ends.
 - **Level Platform**. Hold neutral tilt with the current servo trims.
 - **Autotune Motors** and **Autolevel Platform**. Reserved firmware modes.
 - **Sweep Platform**. Sweep X and Y once, then hold level. Press the button again to restart the sweep.

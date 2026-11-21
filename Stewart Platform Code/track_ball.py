@@ -19,14 +19,14 @@ PACKET = struct.Struct("<3sB3B4fI3f")
 ARDUINO_SERIAL_PORT = "COM6"
 BAUD_RATE = 115200
 DEFAULT_GAINS = (4.2, 0.5, 3.9)
-TRAJECTORY_GAINS = (5.0, 0.8, 4.5)  # Kp, Ki, Kd for circle and triangle
+TRAJECTORY_GAINS = (5.0, 0.8, 4.5)  # Kp, Ki, Kd for circle tracking
 
 TRAJECTORY_SPEED = 0.5
 TRACKING_SLOW_ERROR = 0.05
 TRACKING_PAUSE_ERROR = 0.30
 MIN_SPEED_FACTOR = 0.30
 CIRCLE_POINTS = 108              # More points make the displayed circle smoother
-TRIANGLE_RADIUS = 0.8          # Triangle circumradius as fraction of platform radius
+WAYPOINT_TOLERANCE = 0.05      # Arrival distance as a fraction of platform radius
 PLATFORM_MARGIN = 0.10         # Keep trajectories away from the platform edge
 
 HISTORY_SECONDS = 30
@@ -134,7 +134,7 @@ class Hardware:
 
 
 class Trajectory:
-    """Track progress along a circle or triangle in image pixels."""
+    """Track progress along a circle or polygon in image pixels."""
     def __init__(self, points, shape):
         """Store the path and initialize progress at its first point."""
         self.points = points
@@ -145,17 +145,20 @@ class Trajectory:
     def advance(self, platform, ball, target, dt):
         """Return the next target and whether the path is complete."""
         error = math.dist(ball, platform.normalize(target))
+        if self.shape == "polygon":
+            # Hold the current vertex until the ball reaches it.
+            if error > WAYPOINT_TOLERANCE:
+                return target, False
+            if self.segment == len(self.points) - 1:
+                return target, True
+            self.segment += 1
+            return self.points[self.segment], False
+
         if error >= TRACKING_PAUSE_ERROR:
             return target, False
         # Slow the target as the ball falls behind.
         factor = min(1.0, (TRACKING_PAUSE_ERROR - error) / (TRACKING_PAUSE_ERROR - TRACKING_SLOW_ERROR))
         speed = MIN_SPEED_FACTOR + (1 - MIN_SPEED_FACTOR) * factor
-        # Reduce target speed near triangle corners.
-        if self.shape == "triangle":
-            length = math.dist(*self.points[self.segment:self.segment + 2])
-            corner = min(self.distance, length - self.distance)
-            speed *= max(0.25, min(1.0, corner / (0.12 * platform.radius)))
-
         distance = TRAJECTORY_SPEED * platform.radius * dt * speed
         while self.segment < len(self.points) - 1:
             a, b = self.points[self.segment:self.segment + 2]
@@ -172,7 +175,7 @@ class Trajectory:
 
 
 def make_trajectory(platform, start_px, shape):
-    """Return a pixel path for one circle or triangle, starting at the ball."""
+    """Return a pixel path for one circle, starting at the ball's angle."""
     ox, oy = platform.origin
     x, y = start_px
     radius = platform.radius
@@ -191,21 +194,9 @@ def make_trajectory(platform, start_px, shape):
             for i in range(CIRCLE_POINTS + 1)
         ]
 
-    elif shape == "triangle":
-        # Triangle is centered on the ball's current position.
-        r = min(radius * TRIANGLE_RADIUS, safe_radius - distance)
-        if r <= radius * 0.05:
-            return []
-        vertices = [
-            (x + r * math.cos(2 * math.pi * i / 3),
-             y + r * math.sin(2 * math.pi * i / 3))
-            for i in range(3)
-        ]
-        # Approach vertex 0, then follow all three sides back to vertex 0.
-        return [start_px, *vertices, vertices[0]]
-
     else:
-        raise NotImplementedError("Only circles and triangles are supported for now")
+        raise NotImplementedError("Only circles are generated automatically")
+
 
 
 class History:
@@ -262,7 +253,9 @@ class Tracker:
 
     def active_gains(self, manual_gains):
         """Return the editable gain set for the current tracking mode."""
-        return self.trajectory_gains if self.path is not None else manual_gains
+        if self.path is not None and self.path.shape == "circle":
+            return self.trajectory_gains
+        return manual_gains
 
     def start_path(self, points, shape):
         """Create a trajectory and set its first point as the target."""
