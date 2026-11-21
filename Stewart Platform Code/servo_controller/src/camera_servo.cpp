@@ -9,68 +9,39 @@ void servoInit() {
     servo_drive.setPWMFreq(SERVO_FREQ);  // Analog servos run at ~50 Hz updates
 }
 
-/*!
- *  @brief  Sets the servo angle for a given servo to a specific angle
- *  @param  servo_num Servo number
- *  @param  angle_servo Servo angle in degrees
- */
-void setServoAngleManual(uint8_t servo_num, float angle_servo)
-{
-    angle_servo = constrain(angle_servo, 0.0f, (float)SERVO_RANGE);
+// Trims belong to physical PWM channels. Keep the desired tilt angles so
+// trims can be applied immediately even when tracking is paused.
+static float trims[16] = {};
+static float last_angles[3] = {};
+static const float horizontal[3] = {SERVO_A_HORIZ, SERVO_B_HORIZ, SERVO_C_HORIZ};
+static const float minimum[3] = {SERVO_A_MIN, SERVO_B_MIN, SERVO_C_MIN};
+static const float maximum[3] = {SERVO_A_MAX, SERVO_B_MAX, SERVO_C_MAX};
 
-    float pulse_us = 500.0f +
-        (angle_servo / (float)SERVO_RANGE) * 2000.0f;
-
-    servo_drive.writeMicroseconds(servo_num, (uint16_t)pulse_us);
-}
-
-/*!
- *  @brief  Sets the servo angle for a given servo relative to the platform
- *  @param  servo Servo number 'A'/'B'/'C'
- *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
- *  @param  ball_data ballData struct
- */
-void setServoAngle(char servo, float angle_rel_horiz, BallData* ball_data)
-{
-    float angle_servo = 0;
-    uint8_t servo_num = 0xFF;
-    switch (servo) {
-        case 'A':
-            servo_num = ball_data->servo_A_pin;
-            angle_servo = SERVO_A_HORIZ - angle_rel_horiz;
-            angle_servo = constrain(angle_servo, SERVO_A_MIN, SERVO_A_MAX);
-            break;
-        case 'B':
-            servo_num = ball_data->servo_B_pin;
-            angle_servo = SERVO_B_HORIZ - angle_rel_horiz;
-            angle_servo = constrain(angle_servo, SERVO_B_MIN, SERVO_B_MAX);
-            break;
-        case 'C':
-            servo_num = ball_data->servo_C_pin;
-            angle_servo = SERVO_C_HORIZ - angle_rel_horiz;
-            angle_servo = constrain(angle_servo, SERVO_C_MIN, SERVO_C_MAX);
-            break;
-        default: 
-            return;
+bool setServoTrim(uint8_t pin, float offset_deg) {
+    if (pin >= 16 || !isfinite(offset_deg)) {
+        return false;
     }
-
-    float period_us = 1000000/(float)SERVO_FREQ;
-    float duty = (angle_servo/(float)SERVO_RANGE)*(SERVO_MAX_DUTY-SERVO_MIN_DUTY) + SERVO_MIN_DUTY;
-    float pulse_us = duty*period_us;
-    servo_drive.writeMicroseconds(servo_num, pulse_us);
+    const float offset = constrain(offset_deg, -50.0f, 50.0f);
+    const bool changed = trims[pin] != offset;
+    trims[pin] = offset;
+    return changed;
 }
 
-void setTilt(float thetax, float thetay, BallData* ball_data) { //Sets platform angle relative to neutral position
-    // Limit plane angle to max of plus/minus 20 deg
-    if (thetax > PLANE_ANGLE_MAX)
-        thetax = PLANE_ANGLE_MAX;
-    else if (thetax < -PLANE_ANGLE_MAX)
-        thetax = -PLANE_ANGLE_MAX;
-    if (thetay > PLANE_ANGLE_MAX)
-        thetay = PLANE_ANGLE_MAX;
-    else if (thetay < -PLANE_ANGLE_MAX)
-        thetay = -PLANE_ANGLE_MAX;
+static void writeServoAngle(uint8_t axis, uint8_t pin, float relative_deg) {
+    const float degrees = constrain(horizontal[axis] - relative_deg + trims[pin],
+                                    minimum[axis], maximum[axis]);
+    const float period_us = 1000000 / (float)SERVO_FREQ;
+    const float duty = (degrees / SERVO_RANGE) * (SERVO_MAX_DUTY - SERVO_MIN_DUTY) + SERVO_MIN_DUTY;
+    servo_drive.writeMicroseconds(pin, duty * period_us);
+}
 
+void refreshServoTrim(BallData* ball_data) {
+    writeServoAngle(0, ball_data->servo_A_pin, last_angles[0]);
+    writeServoAngle(1, ball_data->servo_B_pin, last_angles[1]);
+    writeServoAngle(2, ball_data->servo_C_pin, last_angles[2]);
+}
+
+static bool solveTilt(float thetax, float thetay, float angles[3], const BallData* data) {
     // normal vector
     float n[3] = {-tan(thetax*PI/180), -tan(thetay*PI/180), 1};
 
@@ -149,20 +120,55 @@ void setTilt(float thetax, float thetay, BallData* ball_data) { //Sets platform 
         sqrt(pow(d[1], 2) + pow(X2[2], 2)),
         sqrt(pow(d[2], 2) + pow(X3[2], 2))
     };
-    float theta1 = (atan2(X1[2], d[0]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[0],2))/(2*L_11*D[0])))*180/PI;
-    float theta2 = (atan2(X2[2], d[1]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[1],2))/(2*L_11*D[1])))*180/PI;
-    float theta3 = (atan2(X3[2], d[2]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[2],2))/(2*L_11*D[2])))*180/PI;
+    angles[0] = (atan2(X1[2], d[0]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[0],2))/(2*L_11*D[0])))*180/PI;
+    angles[1] = (atan2(X2[2], d[1]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[1],2))/(2*L_11*D[1])))*180/PI;
+    angles[2] = (atan2(X3[2], d[2]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[2],2))/(2*L_11*D[2])))*180/PI;
 
-    // debug
-    // Serial.print("theta1: ");
-    // Serial.println(theta1);
-    // Serial.print("theta2: ");
-    // Serial.println(theta2);
-    // Serial.print("theta3: ");
-    // Serial.println(theta3);
-
-    setServoAngle('A', theta1, ball_data);
-    setServoAngle('B', theta2, ball_data);
-    setServoAngle('C', theta3, ball_data);
+    const uint8_t pins[3] = {data->servo_A_pin, data->servo_B_pin, data->servo_C_pin};
+    for (uint8_t axis = 0; axis < 3; ++axis) {
+        if (pins[axis] >= 16 || !isfinite(angles[axis])) {
+            return false;
+        }
+        const float degrees = horizontal[axis] - angles[axis] + trims[pins[axis]];
+        if (degrees < minimum[axis] || degrees > maximum[axis]) {
+            return false;
+        }
+    }
+    return true;
 }
 
+// Return true when the requested tilt had to be reduced.
+bool setTilt(float thetax, float thetay, BallData* ball_data) {
+    if (!isfinite(thetax) || !isfinite(thetay)) {
+        return true;
+    }
+
+    const float limit = PLANE_ANGLE_MAX;
+    const bool axis_limited = fabs(thetax) > limit || fabs(thetay) > limit;
+    thetax = constrain(thetax, -limit, limit);
+    thetay = constrain(thetay, -limit, limit);
+
+    float angles[3];
+    const bool limited = !solveTilt(thetax, thetay, angles, ball_data);
+    if (limited) {
+        if (!solveTilt(0, 0, angles, ball_data)) {
+            return true;
+        }
+        float low = 0.0f;
+        float high = 1.0f;
+        for (uint8_t i = 0; i < 5; ++i) {
+            const float mid = (low + high) * 0.5f;
+            float candidate[3];
+            if (solveTilt(mid * thetax, mid * thetay, candidate, ball_data)) {
+                low = mid;
+                memcpy(angles, candidate, sizeof(angles));
+            } else {
+                high = mid;
+            }
+        }
+    }
+
+    memcpy(last_angles, angles, sizeof(last_angles));
+    refreshServoTrim(ball_data);
+    return limited || axis_limited;
+}

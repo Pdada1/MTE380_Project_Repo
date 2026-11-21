@@ -1,56 +1,57 @@
 # MTE380 Stewart Platform
 
-The goal is to balance a ball on a circular platform and move it to a target selected in the camera preview. The PC measures the ball and target positions. The Arduino side is intended to use those measurements for PID control of the three servos.
+The PC tracks a ball with a camera and sends its position and target to the Arduino. The Arduino runs the PID controller and translates its tilt commands into servo angles.
 
-## How to run
+## Run the interface
 
-From this folder, create and activate the Conda environment:
+From this folder:
 
 ```powershell
 conda env create -f environment.yml
 conda activate mte_380_env
+python run.py --preview
 ```
 
-The camera index is `1` in `helper.py`. The Arduino serial port is `COM6` in `track_ball.py`. If the camera fails to open, check the index and close any other app using the camera.
+Use the matching firmware from `servo_controller` to move the platform. Run `python run.py` after uploading it, or run `.\rebuild.ps1` to build, upload and launch the interface. The default camera index is `0` in `helper.py`. The default Arduino port is `COM6` in `track_ball.py`. Use `--port COM7` to select a different port or `--serial-debug` to print firmware output. Close other programs using the camera or serial port before starting.
 
-1. Run `python calibrate.py` with the platform level. Click a few spots on the ball to sample its color, then press **C**. Press **R** during color sampling to clear the samples.
-2. Click the three servo attachment points in pin order **19, 20, 21**. Press **U** to undo a point or **S** to save the calibration to `config.json`.
-3. Run `python track_ball.py --preview` to check detection and the coordinate system without serial. The target starts at the center. Click anywhere in the preview to set a new target, press **C** to recenter, or press **Q** to quit.
-4. Run `python track_ball.py` to stream measurements to the Arduino. The firmware in `servo_controller` decodes packets and runs the PID after enough valid samples arrive. `setTilt()` is still a placeholder.
+## Actions and controls
 
-### Check Arduino reception
+- **Calibrate Ball**. Click several spots on the ball and select **Save Calibration**. **Reset Samples** clears the pending color samples.
+- **Calibrate Platform**. The camera detects the red, green and blue markers and fits a circle through them. Confirm the outline and select **Save Calibration**. The red marker defines +X with the default configuration. The two camera calibrations update `config.json` independently and take effect immediately.
+- **Calibrate Servos**. Hold neutral tilt and trim the three servos with the controls below the camera. Each click changes the offset by 1° within ±10°. Offsets are applied by physical PWM channel and reset when the interface starts.
+- **Draw Circle** and **Draw Triangle**. Move the target along one path from the current ball position. A path pauses when the ball is lost or falls behind.
+- **Level Platform**. Hold neutral tilt with the current servo trims.
+- **Autotune Motors** and **Autolevel Platform**. Reserved firmware modes.
+- **Sweep Platform**. Sweep X and Y once, then hold level. Press the button again to restart the sweep.
+- Click inside the platform circle to set a target, press **C** to recenter, or press **Esc** to cancel the active action. Starting a new action replaces the current one.
+- The PID buttons adjust each gain by 0.1. Gain and trim controls remain available during actions. The Arduino uses the gains during ball tracking and applies trims to its servo angles.
 
-Close Arduino Serial Monitor or PlatformIO Device Monitor, then run:
+The graphs show the last 30 seconds of X and Y. Position is ball minus target in platform radii. Velocity and acceleration come from the ball measurements, so changing the target alone does not cause a spike. Gaps indicate missing detections or an interrupted camera stream.
 
-```powershell
-python track_ball.py --serial-debug
-```
+## Extend the interface
 
-The tracker sends packets and prints the Arduino's debug output through the same connection. With the ball detected, look for `Data valid!` and the decoded `x`, `y`, `xr`, and `yr` values. If opening `COM6` returns `Access is denied`, close any other tracker or serial monitor and retry.
-
-## Stage 1 — Calibration
-
-**Ball color.** Sample small patches on the ball and use the HSV values to set color thresholds. Sampling several spots helps capture variation across the ball. The thresholds are saved so tracking can reuse them.
-
-**Platform bounds.** Fit a circle through the three clicked servo points. The circle center is the origin, and the line from the origin to the first point defines +X. +Y is 90° counterclockwise from +X. The radius sets the scale for both axes.
-
-**Servo indices.** `identify_servos()` in `calibrate.py` is the placeholder for Step C. It currently selects clicked index 0 as +X and assigns pins 19, 20, and 21 in click order. The planned approach is to tilt one servo at a time, measure how the apparent center moves, and use that shift to match each pin to a clicked point.
-
-## Stage 2 — Tracking
-
-Threshold each frame using the saved HSV range, clean up small blobs, and use the largest sufficiently round contour as the ball. The center of its enclosing circle gives the ball position in pixels.
-
-Convert both the ball and target to platform coordinates. Subtract the calibrated origin, flip the image Y direction, rotate into the platform axes, and divide by the calibrated radius. This gives the same normalized Cartesian coordinates as finding the normalized radius and angle first. A distance of 0 is the center, 1 is the calibrated edge, and greater than 1 is outside the calibrated circle. The transform assumes the platform stays close to its level calibration geometry. Tilt distortion can be revisited after testing.
+Add a row to `ACTIONS` in `run.py` for a button and its description. For a firmware-backed action, add a matching value to `Status` in `track_ball.py` and `servo_controller/src/main.cpp`.
 
 ## Serial packet
 
-Tracking sends one 23-byte binary packet per frame at 115200 baud. The pin order tells the Arduino which servo defines +X and which two follow counterclockwise.
+The interface uses a 39-byte packet at 115200 baud. Numeric values use little-endian encoding.
 
-| Byte offset | Field | Encoding |
-| --- | --- | --- |
-| 0-2 | Sync | `0x0B 0x00 0x0B` |
-| 3 | Ball valid | Unsigned byte, 1 if detected and 0 otherwise |
-| 4-6 | Servo pins, starting at +X and going counterclockwise | Three unsigned bytes |
-| 7-22 | Ball X, ball Y, target X, target Y | Four little-endian 32-bit floats |
+| Offset | Field |
+| --- | --- |
+| 0–2 | Sync bytes `0B 00 0B` |
+| 3 | Status |
+| 4–6 | Servo pins in +X, counterclockwise order. Trim packets carry the physical pins for their three offsets. |
+| 7–22 | Four floats. Ball X, ball Y, target X, target Y. For trim packets, the first three floats are offsets in degrees. |
+| 23–26 | Unsigned 32-bit frame timestamp in milliseconds. Sweep packets use this field for the sweep ID. |
+| 27–38 | Kp, Ki and Kd as floats |
 
-When the ball is lost, the packet still includes the pins and target. Ball X and Y are set to zero, and the validity byte distinguishes a lost ball from one at the center.
+| Status | Action |
+| --- | --- |
+| 0 | Ball lost |
+| 1 | Tracking |
+| 2 | Level |
+| 3 | Autotune placeholder |
+| 4 | Autolevel placeholder |
+| 5 | Sweep |
+| 6 | Update servo trims alongside the active action |
+| 7 | Calibrate servos at neutral tilt |

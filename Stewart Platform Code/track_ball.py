@@ -1,54 +1,154 @@
-"""Track the ball and send normalized positions over USB serial.
+"""Ball tracking, trajectory motion, measurement history, and Arduino I/O."""
 
-Run python track_ball.py to transmit, or use --preview to run without serial.
-Use --serial-debug to monitor the Arduino's print statements as well.
-Click to set a target, press C to center, O for a circle, T for a triangle,
-or Q to quit.
-"""
-
-import argparse
-import json
+from collections import deque
+from enum import IntEnum
 import math
+from queue import Empty, Full, Queue
 import struct
+from threading import Event, Thread
 import time
 
 import cv2
 
-from helper import CONFIG_PATH, SERVO_PINS, BallDetector, Platform, draw_ball, open_camera
+from helper import SERVO_PINS, open_camera
+
 
 SYNC = bytes((0x0B, 0x00, 0x0B))
-PACKET = struct.Struct("<3sB3B4f")
+PACKET = struct.Struct("<3sB3B4fI3f")
 ARDUINO_SERIAL_PORT = "COM6"
 BAUD_RATE = 115200
-WINDOW = "Platform Tracking"
+DEFAULT_GAINS = (5.0, 2.0, 4.4)
+TRAJECTORY_GAINS = (7.0, 3.0, 4.4)  # Kp, Ki, Kd for circle and triangle
 
-TRAJECTORY_SPEED = 0.35
-TRACKING_SLOW_ERROR = 0.10
+TRAJECTORY_SPEED = 0.2
+TRACKING_SLOW_ERROR = 0.05
 TRACKING_PAUSE_ERROR = 0.30
 MIN_SPEED_FACTOR = 0.30
 CIRCLE_POINTS = 108              # More points make the displayed circle smoother
 TRIANGLE_RADIUS = 0.8          # Triangle circumradius as fraction of platform radius
 PLATFORM_MARGIN = 0.10         # Keep trajectories away from the platform edge
 
+HISTORY_SECONDS = 30
+TRIM_PINS = SERVO_PINS
+TRIM_LIMIT = 10
 
-def open_serial():
-    import serial
 
-    port = serial.Serial(ARDUINO_SERIAL_PORT, BAUD_RATE, write_timeout=0.1)
+class Status(IntEnum):
+    BALL_LOST = 0
+    TRACKING = 1
+    LEVEL = 2
+    AUTOTUNE = 3
+    AUTOLEVEL = 4
+    SWEEP = 5
+    SERVO_TRIM = 6
+    CALIBRATE_SERVOS = 7
+
+
+def put_latest(queue, item):
+    """Replace an unconsumed item instead of building up latency."""
     try:
-        time.sleep(2)  # Allow boards that reset on serial open to boot.
-    except BaseException:
-        port.close()
-        raise
-    return port
+        queue.put_nowait(item)
+    except Full:
+        try:
+            queue.get_nowait()
+        except Empty:
+            pass
+        queue.put_nowait(item)
 
 
-def tracking_packet(pins, ball, target, status = 0):
-    """
-    Pack sync, three CCW servo pins, ball XY, target XY, and ball validity
-    for transmission to the Arduino.
-    """
-    return PACKET.pack(SYNC, status, *pins, *ball, *target)
+class Hardware:
+    """Own the camera and serial port on separate worker threads."""
+
+    def __init__(self, preview, port_name, debug):
+        self.stop = Event()
+        self.frames = Queue(maxsize=1)
+        self.commands = Queue(maxsize=1)
+        self.messages = Queue()
+        self.camera_thread = Thread(target=self.capture, daemon=True)
+        self.camera_thread.start()
+        self.serial_thread = None
+        if not preview:
+            self.serial_thread = Thread(target=self.transmit, args=(port_name, debug), daemon=True)
+            self.serial_thread.start()
+
+    def capture(self):
+        camera = None
+        try:
+            camera = open_camera()
+            camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            while not self.stop.is_set():
+                ok, frame = camera.read()
+                if not ok:
+                    raise RuntimeError("Camera stopped returning frames")
+                put_latest(self.frames, (time.monotonic(), frame))
+        except Exception as error:
+            self.messages.put(("camera", str(error)))
+        finally:
+            if camera is not None:
+                camera.release()
+
+    def transmit(self, port_name, debug):
+        try:
+            import serial
+
+            with serial.Serial(port_name, BAUD_RATE, write_timeout=0.1) as port:
+                if self.stop.wait(2):
+                    return
+                self.messages.put(("serial", f"{port_name} connected"))
+                last_trim = None
+                last_level = None
+                try:
+                    while not self.stop.is_set():
+                        try:
+                            trim, command, last_level = self.commands.get(timeout=0.05)
+                        except Empty:
+                            continue
+                        if trim != last_trim:
+                            port.write(trim)
+                            last_trim = trim
+                        port.write(command)
+                        if debug:
+                            output = port.read_all()
+                            if output:
+                                print(output.decode("ascii", errors="replace"), end="", flush=True)
+                finally:
+                    if last_level is not None:
+                        port.write(last_level)
+        except Exception as error:
+            self.messages.put(("serial", str(error)))
+
+
+class Trajectory:
+    def __init__(self, points, shape):
+        self.points = points
+        self.shape = shape
+        self.segment = 0
+        self.distance = 0.0
+
+    def advance(self, platform, ball, target, dt):
+        error = math.dist(ball, platform.normalize(target))
+        if error >= TRACKING_PAUSE_ERROR:
+            return target, False
+        factor = min(1.0, (TRACKING_PAUSE_ERROR - error) / (TRACKING_PAUSE_ERROR - TRACKING_SLOW_ERROR))
+        speed = MIN_SPEED_FACTOR + (1 - MIN_SPEED_FACTOR) * factor
+        if self.shape == "triangle":
+            length = math.dist(*self.points[self.segment:self.segment + 2])
+            corner = min(self.distance, length - self.distance)
+            speed *= max(0.25, min(1.0, corner / (0.12 * platform.radius)))
+
+        distance = TRAJECTORY_SPEED * platform.radius * dt * speed
+        while self.segment < len(self.points) - 1:
+            a, b = self.points[self.segment:self.segment + 2]
+            length = math.dist(a, b)
+            remaining = length - self.distance
+            if distance < remaining:
+                self.distance += distance
+                fraction = self.distance / length
+                return tuple(p + fraction * (q - p) for p, q in zip(a, b)), False
+            distance -= remaining
+            self.segment += 1
+            self.distance = 0.0
+        return self.points[-1], True
 
 
 def make_trajectory(platform, start_px, shape):
@@ -88,194 +188,92 @@ def make_trajectory(platform, start_px, shape):
         raise NotImplementedError("Only circles and triangles are supported for now")
 
 
-def draw_preview(frame, platform, detection, target_px, ball, target, path, mode):
-    """Display the platform, ball, target, and desired trajectory."""
-    platform.draw(frame)
-    draw_ball(frame, detection)
-    if path:
-        for a, b in zip(path, path[1:]):
-            cv2.line(frame, tuple(map(round, a)), tuple(map(round, b)), (0, 165, 255), 2)
-    cv2.drawMarker(frame, tuple(map(round, target_px)), (0, 255, 0))
-    status = "Ball lost" if ball is None else f"Ball ({ball[0]:.2f}, {ball[1]:.2f})"
-    status += f"   Target ({target[0]:.2f}, {target[1]:.2f})"
-    cv2.putText(frame, status, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(frame, "Click: target | O: circle | T: triangle | C: center | L: level | F: frequency response | Q: quit",
-                (10, frame.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                (255, 255, 255), 1, cv2.LINE_AA)
-    # Show active level or frequency response mode in the top-right
-    if mode in (2, 3):
-        label = "LEVEL ACTIVE" if mode == 2 else "FREQ RESPONSE ACTIVE"
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        scale = 0.5
-        thickness = 1
-        (text_width, text_height), baseline = cv2.getTextSize(label, font, scale, thickness)
-        right = frame.shape[1] - 10
-        top = 38
-        cv2.rectangle(frame, (right - text_width - 16, top),
-                      (right, top + text_height + baseline + 12), (0, 100, 180), -1)
-        cv2.putText(frame, label, (right - text_width - 8, top + text_height + 6),
-                    font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
-    cv2.imshow(WINDOW, frame)
+class History:
+    """Plot target-relative position and derivatives of the ball's position."""
 
+    def __init__(self):
+        self.samples = deque()
+        self.reset_derivatives()
 
-def track(camera, platform, detector, port, serial_debug=False):
-    """Track the ball and move the target smoothly along a trajectory."""
-    target_px = platform.origin
-    path = []
-    segment = 0
-    segment_distance = 0.0
-    previous_time = time.monotonic()
-    shape = None
-    mode = 0  # Normal tracking; 2 = level, 3 = frequency response
+    def reset_derivatives(self):
+        self.previous = None
+        self.velocity = None
 
-    def select_target(event, x, y, flags, param):
-        # Gather user mouse input to determine target location from frame
-        nonlocal target_px, path, shape, mode
-        if event == cv2.EVENT_LBUTTONDOWN:
-            mode = 0
-            target_px = (x, y)
-            path = []
-            shape = None
+    def prune(self, now):
+        while self.samples and self.samples[0][0] < now - HISTORY_SECONDS:
+            self.samples.popleft()
 
-    cv2.namedWindow(WINDOW)
-    cv2.setMouseCallback(WINDOW, select_target)
-
-    # Main tracking loop
-    while True:
-        ok, frame = camera.read()
-        now = time.monotonic()
-        dt = min(now - previous_time, 0.1)  # Prevent a large jump after a slow frame.
-        previous_time = now
-        target = platform.normalize(target_px)
-        if not ok:
-            # Write ball-lost packet so Arduino is aware that the camera isn't returning frames
-            if port is not None:
-                port.write(tracking_packet(platform.pins, (0.0, 0.0), target, 0))
-            raise RuntimeError("Camera stopped returning frames")
-
-        # Find the ball using BallDetector, normalize its location, then write the packet to Arduino
-        detection = detector.detect(frame)
-        ball = platform.normalize(detection[0]) if detection is not None else None
-
-        if path and ball is not None:
-            error = math.dist(ball, target)
-            if error < TRACKING_PAUSE_ERROR:
-                # Reduce target speed when the ball is not keeping up.
-                if error <= TRACKING_SLOW_ERROR:
-                    speed_factor = 1.0
-                else:
-                    fraction = (TRACKING_PAUSE_ERROR - error) / (TRACKING_PAUSE_ERROR - TRACKING_SLOW_ERROR)
-                    speed_factor = MIN_SPEED_FACTOR + (1 - MIN_SPEED_FACTOR) * fraction
-
-                # Slow near triangle corners to avoid sudden direction changes.
-                if shape == "triangle":
-                    a, b = path[segment], path[segment + 1]
-                    length = math.dist(a, b)
-                    corner_distance = min(segment_distance, length - segment_distance)
-                    speed_factor *= max(0.25, min(1.0, corner_distance / (0.12 * platform.radius)))
-
-                remaining = TRAJECTORY_SPEED * platform.radius * dt * speed_factor
-                while remaining > 0 and segment < len(path) - 1:
-                    a, b = path[segment], path[segment + 1]
-                    length = math.dist(a, b)
-                    step = min(remaining, length - segment_distance)
-                    segment_distance += step
-                    remaining -= step
-                    if segment_distance >= length - 1e-6:
-                        segment += 1
-                        segment_distance = 0.0
-                        if segment == len(path) - 1:
-                            target_px = path[-1]
-                            path = []
-                            shape = None
-                            break
-                    if length <= 1e-6:
-                        segment += 1
-                        segment_distance = 0.0
-                if path:
-                    a, b = path[segment], path[segment + 1]
-                    length = math.dist(a, b)
-                    fraction = segment_distance / length if length else 0.0
-                    target_px = (a[0] + fraction * (b[0] - a[0]),
-                                 a[1] + fraction * (b[1] - a[1]))
-                target = platform.normalize(target_px)
-
-        if port is not None:
-            # Keep level or frequency response active until another mode is selected
-            status = mode if mode else (1 if ball is not None else 0)
-            packet_ball = ball if ball is not None else (0.0, 0.0)
-            port.write(tracking_packet(platform.pins, packet_ball, target, status))
-            if serial_debug:
-                # Print the Arduino's serial print statements for debugging,
-                # while keeping only one serial port open.
-                output = port.read_all()
-                if output:
-                    print(output.decode("ascii", errors="replace"), end="", flush=True)
-
-        draw_preview(frame, platform, detection, target_px, ball, target, path, mode)
-
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q") or cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
+    def add(self, now, ball, target):
+        if ball is None:
+            self.reset_derivatives()
+            self.samples.append((now, (None, None, None)))
             return
-        if key == ord("c"):
-            mode = 0
-            target_px, path, shape = platform.origin, [], None
-        if key in (ord("o"), ord("t")) and detection is not None:
-            mode = 0
-            # Draw a circular or triangular trajectory
-            next_shape = "circle" if key == ord("o") else "triangle"
-            next_path = make_trajectory(platform, detection[0], next_shape)
-            if next_path:
-                path = next_path
-                shape = next_shape
-                segment = 0
-                segment_distance = 0.0
-                target_px = path[0]
-            else:
-                print(f"Cannot fit this {next_shape} at the ball's current position.")
-        if key == ord("l"):
-            mode = 2
-            path = []
-            shape = None
-        if key == ord("f"):
-            mode = 3
-            path = []
-            shape = None
+
+        error = tuple(b - t for b, t in zip(ball, target))
+        velocity = acceleration = None
+        if self.previous is not None:
+            timestamp, last_ball = self.previous
+            dt = now - timestamp
+            if 0 < dt <= 0.25:
+                velocity = tuple((b - p) / dt for b, p in zip(ball, last_ball))
+                if self.velocity is not None:
+                    last_velocity, last_dt = self.velocity
+                    acceleration = tuple((v - p) / ((dt + last_dt) / 2)
+                                         for v, p in zip(velocity, last_velocity))
+        self.velocity = (velocity, dt) if velocity is not None else None
+        self.previous = now, ball
+        self.samples.append((now, (error, velocity, acceleration)))
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--preview", action="store_true", help="Run without serial.")
-    parser.add_argument("--serial-debug", action="store_true", help="Print Arduino serial output.")
-    args = parser.parse_args()
+class Tracker:
+    def __init__(self):
+        self.platform = self.detector = self.target = None
+        self.frame = self.frame_time = self.detection = None
+        self.path = None
+        self.history = History()
+        self.trajectory_gains = [round(value * 10) for value in TRAJECTORY_GAINS]
 
-    # Read the config.json parameters for use during tracking
-    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    geometry = config["calibration"]
-    servos = sorted(config["servos"], key=lambda servo: servo["index"])
-    platform = Platform(
-        geometry["origin_px"],
-        geometry["platform_radius_px"],
-        [servo["point_px"] for servo in servos],
-        x_index=geometry.get("zero_degree_servo", 0),
-        pins=[servo.get("pin", SERVO_PINS[servo["index"]]) for servo in servos],
-    )
-    detector = BallDetector(**config["ball_detection"])
+    def active_gains(self, manual_gains):
+        return self.trajectory_gains if self.path is not None else manual_gains
 
-    camera = open_camera()
-    try:
-        if args.preview:
-            # Run as preview, with no transmission to Arduino
-            track(camera, platform, detector, None)
-        else:
-            # Run full algorithm with transmission to Arduino
-            with open_serial() as port:
-                track(camera, platform, detector, port, args.serial_debug)
-    finally:
-        camera.release()
-        cv2.destroyAllWindows()
+    def start_path(self, points, shape):
+        self.path = Trajectory(points, shape)
+        self.target = points[0]
 
+    def process_frame(self, now, frame, detector):
+        dt = min(now - self.frame_time, 0.1) if self.frame_time is not None else 0
+        self.frame, self.frame_time = frame, now
+        self.detection = detector.detect(frame) if detector is not None else None
+        if self.platform is None:
+            return False
+        ball = self.platform.normalize(self.detection[0]) if self.detection is not None else None
+        complete = False
+        if self.path is not None and ball is not None:
+            self.target, complete = self.path.advance(self.platform, ball, self.target, dt)
+        self.history.add(now, ball, self.platform.normalize(self.target))
+        return complete
 
-if __name__ == "__main__":
-    main()
+    def send_command(self, hardware, now, action, gains, trims, sweep_id):
+        pins = self.platform.pins if self.platform is not None else SERVO_PINS
+        manual_gains = gains
+        gains = tuple(value / 10 for value in manual_gains)
+        frame_ms = int((self.frame_time if self.frame_time is not None else now) * 1000) & 0xFFFFFFFF
+        ball = (0.0, 0.0)
+        target = self.platform.normalize(self.target) if self.platform is not None else (0.0, 0.0)
+        status = Status.BALL_LOST
+        if isinstance(action, Status):
+            status = action
+        elif action in ("ball", "platform"):
+            status = Status.LEVEL
+        elif (self.platform is not None and self.detection is not None
+              and now - self.frame_time <= 0.25):
+            status = Status.TRACKING
+            ball = self.platform.normalize(self.detection[0])
+        trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims, 0.0, 0, *DEFAULT_GAINS)
+        timestamp = sweep_id if status == Status.SWEEP else frame_ms
+        tracking_gains = gains
+        if status == Status.TRACKING:
+            tracking_gains = tuple(value / 10 for value in self.active_gains(manual_gains))
+        command = PACKET.pack(SYNC, status, *pins, *ball, *target, timestamp, *tracking_gains)
+        level = PACKET.pack(SYNC, Status.LEVEL, *pins, 0, 0, 0, 0, frame_ms, *gains)
+        put_latest(hardware.commands, (trim, command, level))

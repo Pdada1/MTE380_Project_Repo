@@ -1,11 +1,43 @@
 #include "controller.h"
 #include "LinearFit.h" //SimpleRegression library
 
-#define POS_SAMPLES (int)(1) //1 sample
-#define VEL_SAMPLES (int)(2) //2 samples
+static float kp = KP;
+static float ki = KI;
+static float kd = KD;
 
 float int_ex = 0;
 float int_ey = 0;
+static float saved_int_ex;
+static float saved_int_ey;
+
+void pid_set_gains(float next_kp, float next_ki, float next_kd) {
+    if (!isfinite(next_kp) || !isfinite(next_ki) || !isfinite(next_kd) ||
+        next_kp < 0 || next_ki < 0 || next_kd < 0) {
+        return;
+    }
+    if (next_ki != ki) {
+        int_ex = 0;
+        int_ey = 0;
+    }
+    kp = next_kp;
+    ki = next_ki;
+    kd = next_kd;
+}
+
+void pid_save_integral() {
+    saved_int_ex = int_ex;
+    saved_int_ey = int_ey;
+}
+
+void pid_restore_integral() {
+    int_ex = saved_int_ex;
+    int_ey = saved_int_ey;
+}
+
+void pid_reset() {
+    int_ex = 0;
+    int_ey = 0;
+}
 
 float e_av(BallData* ball_data, char axis) {
     float* x;
@@ -49,7 +81,8 @@ float de_av(BallData* ball_data, char axis) {
     float t[VEL_SAMPLES] = {0};
     for (int i=0; i<VEL_SAMPLES; i++) {
         ex[i] = x[CAMERA_SAMPLES-VEL_SAMPLES+i]; // originally subtracted xr here too, but that caused setpoint kick, so now its just x
-        t[i] = ball_data->t[CAMERA_SAMPLES-VEL_SAMPLES+i] - ball_data->t[0]; //Use difference to keep numbers from getting large for LinearFit
+        // The serial timestamp is in milliseconds; the original fit used seconds.
+        t[i] = (ball_data->t[CAMERA_SAMPLES-VEL_SAMPLES+i] - ball_data->t[0]) * 0.001f;
     }
 
     //Linear regression to find average velocity
@@ -63,7 +96,7 @@ float de_av(BallData* ball_data, char axis) {
 
 float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 'x' and then 'y') per new sample, otherwise integral will be inaccurate
     float e;
-    float dt = ball_data->t[CAMERA_SAMPLES-1] - ball_data->t[CAMERA_SAMPLES-2];
+    float dt = (ball_data->t[CAMERA_SAMPLES-1] - ball_data->t[CAMERA_SAMPLES-2]) * 0.001f;
     switch (axis) {
         case 'x':
             e = ball_data->x[CAMERA_SAMPLES-1] - ball_data->xr[CAMERA_SAMPLES-1];
@@ -85,23 +118,7 @@ float pid_get_tilt(BallData* ball_data, char axis) { //Gets tilt for axis 'x' or
     float int_e = inte(ball_data, axis);
     float d_e = de_av(ball_data, axis);
 
-    float p = e * KP;
-    float d = d_e * KD;
-    float u = p + int_e * KI + d;
-
-    // Debug every 10 control updates
-    // static int count = 0;
-    // if (axis == 'x' && ++count >= 10) {
-    //     count = 0;
-
-    //     Serial.print("P: ");
-    //     Serial.print(p, 3);
-    //     Serial.print(" D: ");
-    //     Serial.print(d, 3);
-    //     Serial.print(" U: ");
-    //     Serial.println(u, 3);
-    // }
-
+    float u = e*kp + int_e*ki + d_e*kd;
     return u;
 }
 

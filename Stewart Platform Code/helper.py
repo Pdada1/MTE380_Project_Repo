@@ -1,8 +1,8 @@
-"""Camera, platform coordinates, and ball detection shared by both programs."""
+"""Shared camera access, platform coordinates, and ball detection."""
 
 import math
-import sys
 from pathlib import Path
+import sys
 
 import cv2
 
@@ -19,14 +19,12 @@ def open_camera():
     Open the camera using the win32 backend
     """
     backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
-    print(f"Opening camera {CAMERA_INDEX}...", flush=True)
     camera = cv2.VideoCapture(CAMERA_INDEX, backend)
     if not camera.isOpened():
         camera.release()
         raise RuntimeError(f"Unable to open camera {CAMERA_INDEX}")
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-    print(f"Camera {CAMERA_INDEX} opened. Waiting for video...", flush=True)
     return camera
 
 

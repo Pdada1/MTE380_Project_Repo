@@ -7,11 +7,19 @@ BallData ballData; // Ball data to be fed to the controller (x,y,t,xr,yr)
 uint16_t num_samples = 0;
 
 #define SYNC_BYTES 3
-#define PACKET_SIZE_BYTES 23
+#define PACKET_SIZE_BYTES 39
 const uint8_t SYNC_WORD[SYNC_BYTES] = {0x0B, 0x00, 0x0B};
 
-// #define CALIBRATE_SERVOS /* Uncomment to enable manual servo calibration mode */
-// #define SWEEP_SERVOS /* Uncomment to enable automatic servo sweep mode */
+enum Status : uint8_t {
+    BALL_LOST = 0,
+    TRACKING = 1,
+    LEVEL = 2,
+    AUTOTUNE = 3,
+    AUTOLEVEL = 4,
+    SWEEP = 5,
+    SERVO_TRIM = 6,
+    CALIBRATE_SERVOS = 7,
+};
 
 struct CameraPacket {
     uint8_t status;
@@ -22,6 +30,8 @@ struct CameraPacket {
     float y;
     float xr;
     float yr;
+    uint32_t frame_ms;
+    float gains[3];
 };
 
 bool read_serial_port(CameraPacket *packet) {
@@ -62,6 +72,12 @@ bool read_serial_port(CameraPacket *packet) {
 
         memcpy(&packet->yr, buf + offset, sizeof(float));
 
+        offset += sizeof(float);
+        memcpy(&packet->frame_ms, buf + offset, sizeof(packet->frame_ms));
+
+        offset += sizeof(packet->frame_ms);
+        memcpy(packet->gains, buf + offset, sizeof(packet->gains));
+
         // Ready to receive next packet
         buf_count = 0;
         return true;
@@ -70,185 +86,167 @@ bool read_serial_port(CameraPacket *packet) {
     return false;
 }
 
-void run_servo_calibration(void) {
-    static int curr_angle1 = SERVO_A_HORIZ;
-    static int curr_angle2 = SERVO_B_HORIZ;
-    static int curr_angle3 = SERVO_C_HORIZ;
-
-    if (Serial.available() > 0) {
-        char key = Serial.read();
-        if (key == 'q') curr_angle1 = constrain(curr_angle1 + 1, 0, SERVO_RANGE);
-        if (key == 'a') curr_angle1 = constrain(curr_angle1 - 1, 0, SERVO_RANGE);
-        if (key == 'w') curr_angle2 = constrain(curr_angle2 + 1, 0, SERVO_RANGE);
-        if (key == 's') curr_angle2 = constrain(curr_angle2 - 1, 0, SERVO_RANGE);
-        if (key == 'e') curr_angle3 = constrain(curr_angle3 + 1, 0, SERVO_RANGE);
-        if (key == 'd') curr_angle3 = constrain(curr_angle3 - 1, 0, SERVO_RANGE);
+// Replay the original X and Y sweep without blocking serial input.
+void update_servo_sweep(uint32_t elapsed_ms, BallData* data) {
+    const uint32_t STEP_MS = 100;
+    const int LIMIT = 15;
+    const uint32_t AXIS_MS = (4 * LIMIT + 1) * STEP_MS;
+    static int previous_step = -1;
+    if (elapsed_ms == 0) {
+        previous_step = -1;
     }
-
-    setServoAngleManual(0, curr_angle1);
-    setServoAngleManual(2, curr_angle2);
-    setServoAngleManual(1, curr_angle3);
-
-    Serial.print(curr_angle1);
-    Serial.print(' ');
-    Serial.print(curr_angle2);
-    Serial.print(' ');
-    Serial.println(curr_angle3);
-    delay(50);
-}
-
-void run_servo_sweep(void) {
-    BallData sweep_data = {}; // Local ball data, no camera required
-
-    // Set servo pins
-    sweep_data.servo_A_pin = 0;
-    sweep_data.servo_B_pin = 2;
-    sweep_data.servo_C_pin = 1;
-
-    const int SWEEP_ANGLE = 15;
-    const int SWEEP_DELAY = 100;
-
-    // Start with platform level
-    setTilt(0, 0, &sweep_data);
-    delay(1000);
-
-    // Sweep X: 0 -> -15 -> +15 -> 0
-    for (int angle = 0; angle >= -SWEEP_ANGLE; angle--) {
-        setTilt(angle, 0, &sweep_data);
-        delay(SWEEP_DELAY);
+    int step = 0;
+    if (elapsed_ms >= 1000) {
+        step = min((elapsed_ms - 1000) / STEP_MS, (2 * AXIS_MS + 500) / STEP_MS) + 1;
     }
-    for (int angle = -SWEEP_ANGLE + 1; angle <= SWEEP_ANGLE; angle++) {
-        setTilt(angle, 0, &sweep_data);
-        delay(SWEEP_DELAY);
+    if (elapsed_ms != 0 && step == previous_step) {
+        return;
     }
-    for (int angle = SWEEP_ANGLE - 1; angle >= 0; angle--) {
-        setTilt(angle, 0, &sweep_data);
-        delay(SWEEP_DELAY);
+    previous_step = step;
+
+    int x = 0;
+    int y = 0;
+    if (elapsed_ms >= 1000 && elapsed_ms < 1000 + 2 * AXIS_MS + 500) {
+        uint32_t offset = elapsed_ms - 1000;
+        const bool y_axis = offset >= AXIS_MS + 500;
+        if (y_axis) {
+            offset -= AXIS_MS + 500;
+        }
+        if (offset < AXIS_MS) {
+            const int index = offset / STEP_MS;
+            const int angle = index <= LIMIT ? -index :
+                              index <= 3 * LIMIT ? index - 2 * LIMIT : 4 * LIMIT - index;
+            if (y_axis) {
+                y = angle;
+            } else {
+                x = angle;
+            }
+        }
     }
-
-    delay(500);
-
-    // Sweep Y: 0 -> -15 -> +15 -> 0
-    for (int angle = 0; angle >= -SWEEP_ANGLE; angle--) {
-        setTilt(0, angle, &sweep_data);
-        delay(SWEEP_DELAY);
-    }
-    for (int angle = -SWEEP_ANGLE + 1; angle <= SWEEP_ANGLE; angle++) {
-        setTilt(0, angle, &sweep_data);
-        delay(SWEEP_DELAY);
-    }
-    for (int angle = SWEEP_ANGLE - 1; angle >= 0; angle--) {
-        setTilt(0, angle, &sweep_data);
-        delay(SWEEP_DELAY);
-    }
-
-    // Finish with platform level
-    setTilt(0, 0, &sweep_data);
-}
-
-void test_servo_response() {
-    const float angles1[3] = {
-        SERVO_A_HORIZ,
-        SERVO_B_HORIZ,
-        SERVO_C_HORIZ
-    };
-
-    const float angles2[3] = {
-        SERVO_A_MAX,
-        SERVO_B_MAX,
-        SERVO_C_MAX
-    };
-
-    const float angles3[3] = {
-        SERVO_A_MIN,
-        SERVO_B_MIN,
-        SERVO_C_MIN
-    };
-
-    const uint8_t pins[3] = {0, 2, 1};
-
-    for (int i = 0; i < 3; i++) {
-        setServoAngleManual(pins[i], angles1[i]);
-    }
-    delay(1000);
-
-    for (int i = 0; i < 3; i++) {
-        setServoAngleManual(pins[i], angles2[i]);
-    }
-    delay(1000);
-
-    for (int i = 0; i < 3; i++) {
-        setServoAngleManual(pins[i], angles3[i]);
-    }
-    delay(1000);
+    setTilt(x, y, data);
 }
 
 void setup() {
     Serial.begin(115200);
     servoInit();
-
-#ifdef SWEEP_SERVOS
-    while (1) {
-        run_servo_sweep();
-        test_servo_response();
-    }
-#endif
-
-#ifdef CALIBRATE_SERVOS
-    while (1) {
-        run_servo_calibration();
-    }
-#endif
 }
 
 void loop() {
+    static Status active = BALL_LOST;
+    static uint32_t sweep_start = 0;
+    static uint32_t sweep_id = 0;
+    static uint32_t last_command = 0;
     CameraPacket curr_packet;
     CameraPacket latest_packet;
     bool new_data = false;
-    bool level_platform = false;
+    bool mode_changed = false;
+    bool trim_changed = false;
 
-    // Empty serial buffer, keeping the latest valid measurement
+    // Keep the latest valid measurement while processing sideband trim updates
+    // independently of the selected action.
     while (read_serial_port(&curr_packet)) {
-        switch (curr_packet.status) {
-            case 0x00:
-                // Ball not in frame, do nothing
-                break;
+        const uint8_t a = curr_packet.servo_A_pin;
+        const uint8_t b = curr_packet.servo_B_pin;
+        const uint8_t c = curr_packet.servo_C_pin;
 
-            case 0x01:
-                // Ball data valid, keep latest measurement
-                latest_packet = curr_packet;
-                new_data = true;
-                level_platform = false;
-                break;
+        if (curr_packet.status == SERVO_TRIM) {
+            trim_changed |= setServoTrim(a, curr_packet.x);
+            trim_changed |= setServoTrim(b, curr_packet.y);
+            trim_changed |= setServoTrim(c, curr_packet.xr);
+            continue;
+        }
+        if (curr_packet.status > CALIBRATE_SERVOS) {
+            continue;
+        }
 
-            case 0x02:
-                // Set platform to 'level' state
-                new_data = false;
-                level_platform = true;
-                break;
+        const Status next = static_cast<Status>(curr_packet.status);
+        if (next == TRACKING &&
+            (!isfinite(curr_packet.x) || !isfinite(curr_packet.y) ||
+             !isfinite(curr_packet.xr) || !isfinite(curr_packet.yr))) {
+            continue;
+        }
 
-            case 0x03:
-                // Run frequency response for motor autotuning
-                set_motor_pins(curr_packet.servo_A_pin,curr_packet.servo_B_pin,curr_packet.servo_C_pin);
-                run_sweep_X();
-                run_sweep_Y();
-                break;
-
-            default:
-                // Invalid status, do nothing
-                break;
+        last_command = millis();
+        if (next == SWEEP && (active != SWEEP || curr_packet.frame_ms != sweep_id)) {
+            sweep_start = last_command;
+            sweep_id = curr_packet.frame_ms;
+            mode_changed = true;
+        }
+        if (active != next) {
+            mode_changed = true;
+            const bool tracking_or_lost =
+                (active == TRACKING || active == BALL_LOST) &&
+                (next == TRACKING || next == BALL_LOST);
+            if (!tracking_or_lost) {
+                num_samples = 0;
+            }
+            pid_reset();
+            active = next;
+        }
+        if (active == TRACKING) {
+            latest_packet = curr_packet;
+            new_data = true;
+        } else {
+            new_data = false;
+            mode_changed |= ballData.servo_A_pin != a || ballData.servo_B_pin != b ||
+                            ballData.servo_C_pin != c;
+            ballData.servo_A_pin = a;
+            ballData.servo_B_pin = b;
+            ballData.servo_C_pin = c;
         }
     }
 
-    if (level_platform) {
-        // Set platform to neutral position
-        setTilt(0, 0, &ballData);
+    if (active == SWEEP) {
+        const uint32_t now = millis();
+        if (now - last_command > 500) {
+            active = LEVEL;
+            setTilt(0, 0, &ballData);
+            return;
+        }
+        update_servo_sweep(mode_changed ? 0 : now - sweep_start, &ballData);
+        if (trim_changed) {
+            refreshServoTrim(&ballData);
+        }
         return;
     }
 
+    switch (active) {
+        case LEVEL:
+        case CALIBRATE_SERVOS:
+            if (mode_changed || trim_changed) {
+                setTilt(0, 0, &ballData);
+            }
+            return;
+
+        case AUTOTUNE:
+            set_motor_pins(curr_packet.servo_A_pin,curr_packet.servo_B_pin,curr_packet.servo_C_pin);
+            run_sweep_X();
+            run_sweep_Y();
+            break;
+        case AUTOLEVEL:
+            // Reserved for future automatic leveling.
+            break;
+
+        default:
+            break;
+    }
+
+    if (trim_changed) {
+        refreshServoTrim(&ballData);
+    }
     if (!new_data) {
-        // No new camera measurement
         return;
+    }
+
+    if (num_samples > 0) {
+        const uint32_t gap = latest_packet.frame_ms - ballData.t[CAMERA_SAMPLES - 1];
+        if (gap == 0) {
+            return;
+        }
+        if (gap > 250) {
+            // Reset PID state after a long gap, while retaining the valid sample history.
+            pid_reset();
+        }
     }
 
     // Shift existing camera samples to make room for next one
@@ -270,7 +268,7 @@ void loop() {
     ballData.y[CAMERA_SAMPLES - 1] = latest_packet.y;
     ballData.xr[CAMERA_SAMPLES - 1] = latest_packet.xr;
     ballData.yr[CAMERA_SAMPLES - 1] = latest_packet.yr;
-    ballData.t[CAMERA_SAMPLES - 1] = millis() / 1000.0f;
+    ballData.t[CAMERA_SAMPLES - 1] = latest_packet.frame_ms;
 
     // Only run controller after ballData buffers have filled
     if (num_samples < CAMERA_SAMPLES) {
@@ -278,12 +276,27 @@ void loop() {
     }
 
     if (num_samples >= CAMERA_SAMPLES) {
+        pid_set_gains(latest_packet.gains[0], latest_packet.gains[1], latest_packet.gains[2]);
+        pid_save_integral();
         float thetax = pid_get_xtilt(&ballData);
         float thetay = pid_get_ytilt(&ballData);
-        setTilt(thetax, thetay, &ballData);
+        const bool limited = setTilt(thetax, thetay, &ballData);
+        if (limited) {
+            pid_restore_integral();
+        }
 
-        // Serial.print(thetax);
-        // Serial.print(' ');
-        // Serial.println(thetay);
+        static uint32_t last_log_ms = 0;
+        const uint32_t now = millis();
+        if (now - last_log_ms >= 250 && Serial.availableForWrite() >= 56) {
+            last_log_ms = now;
+            // Serial.print(F("dt_ms="));
+            // Serial.print(ballData.t[CAMERA_SAMPLES - 1] - ballData.t[CAMERA_SAMPLES - 2]);
+            // Serial.print(F(" tilt="));
+            // Serial.print(thetax, 2);
+            // Serial.print('/');
+            // Serial.print(thetay, 2);
+            // Serial.print(F(" limited="));
+            // Serial.println(limited);
+        }
     }
 }

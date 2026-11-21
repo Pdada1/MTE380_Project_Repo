@@ -19,14 +19,14 @@ if ($PioCommand) {
 if (-not (Test-Path (Join-Path $PlatformIOProject "platformio.ini"))) {
     throw "No platformio.ini in $PlatformIOProject. Update `$PlatformIOProject."
 }
-if (-not (Test-Path (Join-Path $TrackingDirectory "track_ball.py"))) {
-    throw "No track_ball.py in $TrackingDirectory. Update `$TrackingDirectory."
+if (-not (Test-Path (Join-Path $TrackingDirectory "run.py"))) {
+    throw "No run.py in $TrackingDirectory. Update `$TrackingDirectory."
 }
 
-Write-Host "Stopping track_ball.py..."
+Write-Host "Stopping the platform interface..."
 Get-CimInstance Win32_Process | Where-Object {
     $_.Name -match '^(python|pythonw)(\.exe)?$' -and
-    $_.CommandLine -match 'track_ball\.py'
+    $_.CommandLine -match '(?:run|track_ball)\.py'
 } | ForEach-Object {
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
 }
@@ -44,8 +44,11 @@ try {
     Pop-Location
 }
 
-Write-Host "Starting track_ball.py..."
-Start-Process -FilePath "powershell.exe" -WorkingDirectory $TrackingDirectory -ArgumentList @(
-    "-NoExit", "-Command", "& '$Python' 'track_ball.py'"
-)
+Write-Host "Starting run.py..."
+Push-Location $TrackingDirectory
+try {
+    & $Python run.py
+} finally {
+    Pop-Location
+}
 Write-Host "Done."

@@ -13,15 +13,15 @@
 // Servo A: index 0 (as labelled on platform)
 // Servo B: index 2
 // Servo C: index 1
-#define SERVO_A_MAX 126.0 // Link touches ground
-#define SERVO_A_MIN 66.0 //Links are straight
-#define SERVO_A_HORIZ 102.0 // Horizontal position (linkage parallel to gnd)
-#define SERVO_B_MAX 114.0
-#define SERVO_B_MIN 75.0
-#define SERVO_B_HORIZ 99.0
-#define SERVO_C_MAX 108.0
-#define SERVO_C_MIN 56.0
-#define SERVO_C_HORIZ 89.0
+#define SERVO_A_MAX 124.0 // Link touches ground
+#define SERVO_A_MIN 65.0 //Links are straight
+#define SERVO_A_HORIZ 88.0 // Horizontal position (linkage parallel to gnd)
+#define SERVO_B_MAX 113.0
+#define SERVO_B_MIN 65.0
+#define SERVO_B_HORIZ 86.0
+#define SERVO_C_MAX 106.0
+#define SERVO_C_MIN 47.0
+#define SERVO_C_HORIZ 71.0
 
 // stewart platform dimensions 
 #define S 140 // distance from center of platform to pivot point
@@ -34,6 +34,8 @@
 #define SHIELD_ADDR 0x40
 
 #define CAMERA_SAMPLES 3 // Do not change without updating other segments of code!!!
+#define POS_SAMPLES 2
+#define VEL_SAMPLES 3
 
 
 struct BallData { //Struct to keep track of all relevant ball data
@@ -42,7 +44,7 @@ struct BallData { //Struct to keep track of all relevant ball data
     float y[CAMERA_SAMPLES] = {0};
     float xr[CAMERA_SAMPLES] = {0};
     float yr[CAMERA_SAMPLES] = {0};
-    float t[CAMERA_SAMPLES] = {0}; //t of each sample [s]
+    uint32_t t[CAMERA_SAMPLES] = {0}; // Sample timestamps in milliseconds
     uint8_t servo_A_pin = 0xFF;
     uint8_t servo_B_pin = 0xFF;
     uint8_t servo_C_pin = 0xFF;
@@ -54,10 +56,9 @@ void camera_read_data(BallData* ball_data);
 
 void servoInit();
 
-void setServoAngleManual(uint8_t servo_num, float angle_servo);
+bool setServoTrim(uint8_t pin, float offset_deg);
+void refreshServoTrim(BallData* ball_data);
 
-void setServoAngle(char servo, float angle_rel_horiz, BallData* ball_data);
-
-void setTilt(float thetax, float thetay, BallData* ball_data);
+bool setTilt(float thetax, float thetay, BallData* ball_data);
 
 #endif
