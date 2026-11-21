@@ -206,6 +206,20 @@ void loop() {
     bool new_data = false;
     bool level_platform = false;
 
+
+
+
+    // @MM
+    static bool use_autotune_pid = false;
+
+    #define T_RISE_DESIRED 1.0 // TODO does this have to be proportional to the distance the set point is from the initial position? 
+
+    static float xr_prev = 0;
+    static float yr_prev = 0;
+    static float e_prev = 0;
+
+    static float t_0 = 0; // time when set point is first changed 
+
     // Empty serial buffer, keeping the latest valid measurement
     while (read_serial_port(&curr_packet)) {
         switch (curr_packet.status) {
@@ -226,8 +240,26 @@ void loop() {
                 level_platform = true;
                 break;
 
-            case 0x03:
+            case 0x03: // @MM
                 // Run frequency response for motor autotuning
+                latest_packet = curr_packet;
+                level_platform = false;
+
+
+                // detect if set point has changed
+                // if so, change PID parameters, and save when it changed
+                // @TODO check if ball has settled prior.
+                // @TODO generate xr, yr randomly 
+                // thus if you change setpoint while ball hasnt settled, youll have to choose one again 
+                if (xr_prev != latest_packet.xr || yr_prev != latest_packet.yr) {
+                    use_autotune_pid = true;
+                    t_0 = millis() / 1000.0f;
+                    e_prev = 0;
+              
+                    xr_prev = latest_packet.xr;
+                    yr_prev = latest_packet.yr;
+                }
+
                 break;
 
             default:
@@ -236,11 +268,13 @@ void loop() {
         }
     }
 
+
     if (level_platform) {
         // Set platform to neutral position
         setTilt(0, 0, &ballData);
         return;
     }
+
 
     if (!new_data) {
         // No new camera measurement
@@ -273,9 +307,33 @@ void loop() {
         num_samples++;
     }
 
+    if (use_autotune_pid) {
+
+        float e = sqrt(pow(e_av(&ballData, 'x'), 2) + pow(e_av(&ballData, 'y'), 2));
+        float de = e_prev - e;
+
+        if (de > 0) { // ball passes set point
+            use_autotune_pid = false;
+            float t_r = ballData.t[0] - t_0;
+            float kp_scale = t_r/T_RISE_DESIRED;
+            Serial.print("time: ");
+            Serial.print(ballData.t[0]);
+            Serial.print("\tt_r: ");
+            Serial.print(t_r);
+            Serial.print("\tt_desired: ");
+            Serial.print(T_RISE_DESIRED);
+            Serial.print("\tkp_scale: ");
+            Serial.println(kp_scale);
+
+            set_autotune_pid(kp_scale, 0, 0);
+        }
+
+        e_prev = e;
+    }
+
     if (num_samples >= CAMERA_SAMPLES) {
-        float thetax = pid_get_xtilt(&ballData);
-        float thetay = pid_get_ytilt(&ballData);
+        float thetax = pid_get_xtilt(&ballData, use_autotune_pid);
+        float thetay = pid_get_ytilt(&ballData, use_autotune_pid);
         setTilt(thetax, thetay, &ballData);
 
         // Serial.print(thetax);
