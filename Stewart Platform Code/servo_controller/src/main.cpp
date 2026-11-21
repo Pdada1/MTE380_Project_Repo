@@ -40,7 +40,6 @@ bool read_serial_port(CameraPacket *packet) {
 
     while (Serial.available() > 0) {
         buf[buf_count++] = (uint8_t)Serial.read();
-
         if (buf_count >= SYNC_BYTES &&
             memcmp(buf, SYNC_WORD, SYNC_BYTES) != 0) {
             // Sync word not valid, shift buffer by one byte
@@ -222,6 +221,7 @@ void loop() {
             set_motor_pins(curr_packet.servo_A_pin,curr_packet.servo_B_pin,curr_packet.servo_C_pin);
             run_sweep_X();
             run_sweep_Y();
+            active=LEVEL;
             break;
         case AUTOLEVEL:
             // Reserved for future automatic leveling.

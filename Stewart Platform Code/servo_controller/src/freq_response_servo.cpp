@@ -28,7 +28,7 @@ Reset the platform to level and wait for the computer to tell it to continue?
 BallData sweep_ball_data;
 unsigned long time_us;
 
-Mode current_mode = Mode::HUMAN_IN_LOOP;
+Mode current_mode = Mode::TRANSIENT_IT;
 
 // Amplitude (deg) that keeps ball travel near BALL_EXTENT_MM at this frequency.
 float amp_for_freq(float freq)
