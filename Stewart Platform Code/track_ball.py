@@ -18,15 +18,15 @@ SYNC = bytes((0x0B, 0x00, 0x0B))
 PACKET = struct.Struct("<3sB3B4fI3f")
 ARDUINO_SERIAL_PORT = "COM6"
 BAUD_RATE = 115200
-DEFAULT_GAINS = (4.2, 0.5, 3.9)
+DEFAULT_GAINS = (4.5, 0.5, 3.7)
 TRAJECTORY_GAINS = (5.0, 0.8, 4.5)  # Kp, Ki, Kd for circle tracking
 
 TRAJECTORY_SPEED = 0.5
 TRACKING_SLOW_ERROR = 0.05
 TRACKING_PAUSE_ERROR = 0.30
-MIN_SPEED_FACTOR = 0.30
+MIN_SPEED_FACTOR = 1.0
 CIRCLE_POINTS = 108              # More points make the displayed circle smoother
-WAYPOINT_TOLERANCE = 0.05      # Arrival distance as a fraction of platform radius
+WAYPOINT_TOLERANCE = 0.10      # Arrival distance as a fraction of platform radius
 PLATFORM_MARGIN = 0.10         # Keep trajectories away from the platform edge
 
 HISTORY_SECONDS = 30
