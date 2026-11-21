@@ -52,7 +52,6 @@ bool wait_for_pc()
     {
     } // block until the PC sends anything
     int byte = Serial.read();
-    Serial.print(byte);
     return byte == PROCEED_CHAR;
 }
 
@@ -100,6 +99,14 @@ void run_sweep(char axis)
 
         int total_points = (int)(NUM_OSCILLATIONS / (freq * MIN_TSTEP) + 0.5f);
         float amp = amp_for_freq(freq);
+        
+        Serial.print("RUN_START,");
+        Serial.print(axis);
+        Serial.print(',');
+        Serial.print(freq, 2);
+        Serial.print(',');
+        Serial.println(amp, 3);
+
         time_us = micros();
 
         for (int i = 0; i < total_points; i++)
@@ -116,6 +123,7 @@ void run_sweep(char axis)
             {
             }
         }
+        Serial.println("RUN_END");
     }
 
     setTilt(0, 0, &sweep_ball_data); // leave the platform level
