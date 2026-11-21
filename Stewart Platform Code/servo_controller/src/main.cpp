@@ -196,12 +196,47 @@ static void update_tracking(const CameraPacket& packet) {
         num_samples++;
     }
 
+    // @MM
+    static bool use_autotune_pid = false;
+
+    #define T_RISE_DESIRED 1.0 // TODO does this have to be proportional to the distance the set point is from the initial position? 
+
+    static float xr_prev = 0;
+    static float yr_prev = 0;
+    static float e_prev = 0;
+
+    static float t_0 = 0; // time when set point is first changed 
+
+    if (use_autotune_pid) { //@MM
+
+        float e = sqrt(pow(e_av(&ballData, 'x'), 2) + pow(e_av(&ballData, 'y'), 2));
+        float de = e_prev - e;
+
+        if (de > 0) { // ball passes set point
+            use_autotune_pid = false;
+            float t_r = ballData.t[0] - t_0;
+            float kp_scale = t_r/T_RISE_DESIRED;
+            Serial.print("time: ");
+            Serial.print(ballData.t[0]);
+            Serial.print("\tt_r: ");
+            Serial.print(t_r);
+            Serial.print("\tt_desired: ");
+            Serial.print(T_RISE_DESIRED);
+            Serial.print("\tkp_scale: ");
+            Serial.println(kp_scale);
+
+            set_autotune_pid(kp_scale, 0, 0);
+        }
+
+        e_prev = e;
+    }
+
     if (num_samples >= CAMERA_SAMPLES) {
         pid_set_gains(packet.gains[0], packet.gains[1], packet.gains[2]);
         // Save the integral so we can undo this step if the tilt hits a limit.
         pid_save_integral();
-        float thetax = pid_get_xtilt(&ballData);
-        float thetay = pid_get_ytilt(&ballData);
+        float thetax = pid_get_xtilt(&ballData, use_autotune_pid);
+        float thetay = pid_get_ytilt(&ballData, use_autotune_pid);
         const bool limited = setTilt(thetax, thetay, &ballData);
         if (limited) {
             pid_restore_integral();
@@ -286,6 +321,13 @@ void loop() {
             case BALL_LOST:
             case LEVEL:
             case AUTOTUNE:
+
+
+
+
+
+
+                
             case AUTOLEVEL:
             case CALIBRATE_SERVOS:
                 // These modes do not use ball positions. Drop any pending tracking update
@@ -340,6 +382,28 @@ void loop() {
                 setTilt(0, 0, &ballData);
             }
             break;
+
+        case AUTOTUNE_MM:
+         // Run frequency response for motor autotuning
+        latest_packet = curr_packet;
+        level_platform = false;
+
+
+        // detect if set point has changed
+        // if so, change PID parameters, and save when it changed
+        // @TODO check if ball has settled prior.
+        // @TODO generate xr, yr randomly 
+        // thus if you change setpoint while ball hasnt settled, youll have to choose one again 
+        if (xr_prev != latest_packet.xr || yr_prev != latest_packet.yr) {
+            use_autotune_pid = true;
+            t_0 = millis() / 1000.0f;
+            e_prev = 0;
+        
+            xr_prev = latest_packet.xr;
+            yr_prev = latest_packet.yr;
+        }
+
+        break;
 
         case AUTOTUNE: {
             // Run both axes from one command without waiting for a serial prompt.

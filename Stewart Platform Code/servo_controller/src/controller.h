@@ -13,7 +13,10 @@ void pid_reset();
 void pid_save_integral();
 void pid_restore_integral();
 
-float pid_get_xtilt(BallData* ball_data);
-float pid_get_ytilt(BallData* ball_data);
+float pid_get_xtilt(BallData* ball_data, bool autotune);
+float pid_get_ytilt(BallData* ball_data, bool autotune);
+float e_av(BallData* ball_data, char axis);
+
+void set_autotune_pid(float _kp, float _kd, float _ki);
 
 #endif

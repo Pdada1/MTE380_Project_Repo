@@ -7,6 +7,12 @@ static float kd = KD;
 
 float int_ex = 0;
 float int_ey = 0;
+
+// @MM autotune PID params
+float kp_a = KP; //todo find a good conservative value to have as an initial proportion constant
+float ki_a = 0;
+float kd_a = 0;
+
 static float saved_int_ex;
 static float saved_int_ey;
 
@@ -113,19 +119,54 @@ float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 
     }
 }
 
-float pid_get_tilt(BallData* ball_data, char axis) { //Gets tilt for axis 'x' or 'y'
+float pid_get_tilt(BallData* ball_data, char axis, bool autotune) { //Gets tilt for axis 'x' or 'y'
     float e = e_av(ball_data, axis);
     float int_e = inte(ball_data, axis);
     float d_e = de_av(ball_data, axis);
+    float p, u, d;
 
-    float u = e*kp + int_e*ki + d_e*kd;
+    if (autotune) {
+        p = e * kp_a;
+        d = d_e * kd_a;
+        u = p + int_e * ki_a + d;
+    }
+    else {
+        p = e * KP;
+        d = d_e * KD;
+        u = p + int_e * KI + d;
+    }
+
+
+
+    // Debug every 10 control updates
+    // static int count = 0;
+    // if (axis == 'x' && ++count >= 10) {
+    //     count = 0;
+
+    //     Serial.print("P: ");
+    //     Serial.print(p, 3);
+    //     Serial.print(" D: ");
+    //     Serial.print(d, 3);
+    //     Serial.print(" U: ");
+    //     Serial.println(u, 3);
+    // }
+
     return u;
 }
 
-float pid_get_xtilt(BallData* ball_data) {
-    return pid_get_tilt(ball_data, 'x');
+
+float pid_get_xtilt(BallData* ball_data, bool autotune) {
+    return pid_get_tilt(ball_data, 'x', autotune);
 }
 
-float pid_get_ytilt(BallData* ball_data) {
-    return pid_get_tilt(ball_data, 'y');
+float pid_get_ytilt(BallData* ball_data, bool autotune) {
+    return pid_get_tilt(ball_data, 'y', autotune);
 }
+
+void set_autotune_pid(float _kp, float _kd, float _ki) {
+    kp *= _kp; // FIXME: this function should ideally set the value, not scale it
+    kd = _kd;
+    ki = _ki;
+}
+
+    
