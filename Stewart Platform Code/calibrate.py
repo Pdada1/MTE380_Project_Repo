@@ -31,10 +31,7 @@ def fit_circle(points):
 
 
 def sample_ball_color(frame, detector, x, y):
-    """
-    Samples the ball color and stores the associated parameters to
-    track it during operation.
-    """
+    """Expand the HSV bounds using a small patch around the click."""
     patch = frame[max(0, y - 2):y + 3, max(0, x - 2):x + 3]
     hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
     old_lower = detector.lower if detector else (179, 255, 255)
@@ -113,10 +110,12 @@ def find_platform(frame):
 
 
 def read_config():
+    """Load the saved calibration or return an empty configuration."""
     return json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
 
 
 def calibration_objects(config, detector=None, platform=None):
+    """Build the detector and platform from available calibration data."""
     if "ball_detection" in config:
         detector = BallDetector(**config["ball_detection"])
     if "calibration" in config and "servos" in config:
@@ -132,6 +131,7 @@ def calibration_objects(config, detector=None, platform=None):
 
 
 def save_config(config, frame, action, candidate):
+    """Save the selected calibration and preserve the other settings."""
     config = dict(config)
     height, width = frame.shape[:2]
     config["camera"] = {"index": CAMERA_INDEX, "frame_width": width, "frame_height": height}
@@ -153,5 +153,6 @@ def save_config(config, frame, action, candidate):
 
     temp = CONFIG_PATH.with_suffix(".tmp")
     temp.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    # Replace the saved file only after the temporary write succeeds.
     temp.replace(CONFIG_PATH)
     return config

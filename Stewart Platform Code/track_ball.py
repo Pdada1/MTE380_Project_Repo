@@ -14,6 +14,7 @@ from helper import SERVO_PINS, open_camera
 
 
 SYNC = bytes((0x0B, 0x00, 0x0B))
+# Wire fields in order: sync, status, pins, ball XY, target XY, timestamp, PID gains.
 PACKET = struct.Struct("<3sB3B4fI3f")
 ARDUINO_SERIAL_PORT = "COM6"
 BAUD_RATE = 115200
@@ -34,6 +35,7 @@ TRIM_LIMIT = 10
 
 
 class Status(IntEnum):
+    """Match the command and tracking status values used by the Arduino."""
     BALL_LOST = 0
     TRACKING = 1
     LEVEL = 2
@@ -42,6 +44,11 @@ class Status(IntEnum):
     SWEEP = 5
     SERVO_TRIM = 6
     CALIBRATE_SERVOS = 7
+
+
+# These modes from the Status class send ONE packet then do not send more, i.e.,
+# they act like a latch. All other modes spam packets with their Status type
+HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE, Status.AUTOLEVEL)
 
 
 def put_latest(queue, item):
@@ -60,6 +67,7 @@ class Hardware:
     """Own the camera and serial port on separate worker threads."""
 
     def __init__(self, preview, port_name, debug):
+        """Start camera capture and open serial unless preview mode is active."""
         self.stop = Event()
         self.frames = Queue(maxsize=1)
         self.commands = Queue(maxsize=1)
@@ -72,6 +80,7 @@ class Hardware:
             self.serial_thread.start()
 
     def capture(self):
+        """Queue the latest camera frame with its host timestamp."""
         camera = None
         try:
             camera = open_camera()
@@ -88,25 +97,31 @@ class Hardware:
                 camera.release()
 
     def transmit(self, port_name, debug):
+        """Send current commands and request level on shutdown."""
         try:
             import serial
 
             with serial.Serial(port_name, BAUD_RATE, write_timeout=0.1) as port:
+                # Give the Arduino time to reset after opening the serial port.
                 if self.stop.wait(2):
                     return
                 self.messages.put(("serial", f"{port_name} connected"))
                 last_trim = None
+                last_mode_request = None
                 last_level = None
                 try:
                     while not self.stop.is_set():
                         try:
-                            trim, command, last_level = self.commands.get(timeout=0.05)
+                            trim, command, last_level, mode_request = self.commands.get(timeout=0.05)
                         except Empty:
                             continue
                         if trim != last_trim:
                             port.write(trim)
                             last_trim = trim
-                        port.write(command)
+                        # Deduplicate after sending so replacing a queued update can't lose the request.
+                        if mode_request is None or mode_request != last_mode_request:
+                            port.write(command)
+                            last_mode_request = mode_request
                         if debug:
                             output = port.read_all()
                             if output:
@@ -119,18 +134,23 @@ class Hardware:
 
 
 class Trajectory:
+    """Track progress along a circle or triangle in image pixels."""
     def __init__(self, points, shape):
+        """Store the path and initialize progress at its first point."""
         self.points = points
         self.shape = shape
         self.segment = 0
         self.distance = 0.0
 
     def advance(self, platform, ball, target, dt):
+        """Return the next target and whether the path is complete."""
         error = math.dist(ball, platform.normalize(target))
         if error >= TRACKING_PAUSE_ERROR:
             return target, False
+        # Slow the target as the ball falls behind.
         factor = min(1.0, (TRACKING_PAUSE_ERROR - error) / (TRACKING_PAUSE_ERROR - TRACKING_SLOW_ERROR))
         speed = MIN_SPEED_FACTOR + (1 - MIN_SPEED_FACTOR) * factor
+        # Reduce target speed near triangle corners.
         if self.shape == "triangle":
             length = math.dist(*self.points[self.segment:self.segment + 2])
             corner = min(self.distance, length - self.distance)
@@ -192,18 +212,22 @@ class History:
     """Plot target-relative position and derivatives of the ball's position."""
 
     def __init__(self):
+        """Initialize the plot buffer and derivative state."""
         self.samples = deque()
         self.reset_derivatives()
 
     def reset_derivatives(self):
+        """Clear the previous position and velocity used for differences."""
         self.previous = None
         self.velocity = None
 
     def prune(self, now):
+        """Remove samples older than the plot window."""
         while self.samples and self.samples[0][0] < now - HISTORY_SECONDS:
             self.samples.popleft()
 
     def add(self, now, ball, target):
+        """Record position error and estimate ball velocity and acceleration."""
         if ball is None:
             self.reset_derivatives()
             self.samples.append((now, (None, None, None)))
@@ -226,21 +250,27 @@ class History:
 
 
 class Tracker:
+    """Maintain tracking state and prepare commands for the Arduino."""
     def __init__(self):
+        """Initialize frame, target, history, and trajectory gains."""
         self.platform = self.detector = self.target = None
         self.frame = self.frame_time = self.detection = None
         self.path = None
         self.history = History()
+        # Store editable gains in tenths to match the GUI step size.
         self.trajectory_gains = [round(value * 10) for value in TRAJECTORY_GAINS]
 
     def active_gains(self, manual_gains):
+        """Return the editable gain set for the current tracking mode."""
         return self.trajectory_gains if self.path is not None else manual_gains
 
     def start_path(self, points, shape):
+        """Create a trajectory and set its first point as the target."""
         self.path = Trajectory(points, shape)
         self.target = points[0]
 
     def process_frame(self, now, frame, detector):
+        """Detect the ball, update the path and history, and report completion."""
         dt = min(now - self.frame_time, 0.1) if self.frame_time is not None else 0
         self.frame, self.frame_time = frame, now
         self.detection = detector.detect(frame) if detector is not None else None
@@ -253,7 +283,8 @@ class Tracker:
         self.history.add(now, ball, self.platform.normalize(self.target))
         return complete
 
-    def send_command(self, hardware, now, action, gains, trims, sweep_id):
+    def send_command(self, hardware, now, action, gains, trims, mode_request_id):
+        """Queue servo trims, the active command, and a shutdown level packet."""
         pins = self.platform.pins if self.platform is not None else SERVO_PINS
         manual_gains = gains
         gains = tuple(value / 10 for value in manual_gains)
@@ -270,10 +301,12 @@ class Tracker:
             status = Status.TRACKING
             ball = self.platform.normalize(self.detection[0])
         trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims, 0.0, 0, *DEFAULT_GAINS)
-        timestamp = sweep_id if status == Status.SWEEP else frame_ms
+        # Each button press gets its own ID, even if it selects the same mode again.
+        mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
+        timestamp = mode_request_id if status == Status.SWEEP else frame_ms
         tracking_gains = gains
         if status == Status.TRACKING:
             tracking_gains = tuple(value / 10 for value in self.active_gains(manual_gains))
         command = PACKET.pack(SYNC, status, *pins, *ball, *target, timestamp, *tracking_gains)
         level = PACKET.pack(SYNC, Status.LEVEL, *pins, 0, 0, 0, 0, frame_ms, *gains)
-        put_latest(hardware.commands, (trim, command, level))
+        put_latest(hardware.commands, (trim, command, level, mode_request))

@@ -12,7 +12,7 @@ import cv2
 from calibrate import calibration_objects, find_platform, read_config, sample_ball_color, save_config
 from helper import Platform, draw_ball
 from track_ball import (
-    ARDUINO_SERIAL_PORT, DEFAULT_GAINS, HISTORY_SECONDS, TRIM_LIMIT, TRIM_PINS,
+    ARDUINO_SERIAL_PORT, DEFAULT_GAINS, HISTORY_SECONDS, HOLD_LEVEL_MODES, TRIM_LIMIT, TRIM_PINS,
     Hardware, Status, Tracker, make_trajectory,
 )
 
@@ -25,8 +25,8 @@ ACTIONS = (
     ("Draw Circle", "Follow a circle starting at the ball.", "start_path", "circle"),
     ("Draw Triangle", "Follow a triangle around the ball.", "start_path", "triangle"),
     ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
-    ("Autotune Motors", "Select the reserved motor frequency-response mode.", "start_mode", Status.AUTOTUNE),
-    ("Autolevel Platform", "Select the reserved autolevel mode.", "start_mode", Status.AUTOLEVEL),
+    ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "start_mode", Status.AUTOTUNE),
+    ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
     ("Sweep Platform", "Sweep X and Y once, then hold level.", "start_mode", Status.SWEEP),
     ("Quit", "Close the interface.", "close"),
 )
@@ -34,6 +34,7 @@ MODE_LABELS = {args[0]: label for label, _, method, *args in ACTIONS if method =
 
 
 def draw_history(history, canvas, now, index):
+    """Plot the selected metric for both axes over the latest 30 seconds."""
     history.prune(now)
     width, height = canvas.winfo_width(), canvas.winfo_height()
     if width < 100 or height < 75:
@@ -55,6 +56,7 @@ def draw_history(history, canvas, now, index):
         line = []
         previous_time = None
         for timestamp, xy in data:
+            # Break the line across missed detections or long sample gaps.
             if xy is None or (previous_time is not None and timestamp - previous_time > 0.25):
                 if len(line) >= 4:
                     canvas.create_line(*line, fill=color, width=2)
@@ -69,7 +71,9 @@ def draw_history(history, canvas, now, index):
 
 
 class App:
+    """Manage GUI controls, calibration actions, and display updates."""
     def __init__(self, root, args):
+        """Initialize the interface, load calibration, and start the update loop."""
         self.root = root
         self.preview = args.preview
         self.config = {}
@@ -83,7 +87,7 @@ class App:
         self.job = None
         self.last_graph = 0
         self.last_sent = 0
-        self.sweep_id = 0
+        self.mode_request_id = 0
         self.message = tk.StringVar(value="Starting camera...")
         self.connection = tk.StringVar(value="Preview" if args.preview else f"Connecting to {args.port}...")
         self.camera_error = None
@@ -101,6 +105,7 @@ class App:
         self.tick()
 
     def build_ui(self):
+        """Lay out the actions, camera view, controls, and history graphs."""
         self.root.title("MTE380 Stewart Platform")
         self.root.geometry("1310x760")
         self.root.minsize(1000, 690)
@@ -160,16 +165,19 @@ class App:
             self.graphs.append(canvas)
 
     def control_row(self, parent, row, label, names, get_values, step, scale, low, high):
+        """Build +/- controls and return a callback to refresh their values."""
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 5))
         labels = []
         unit = "°" if scale == 1 else ""
         precision = 0 if scale == 1 else 1
 
         def refresh():
+            """Read the current values into the displayed labels."""
             for name, value, widget in zip(names, get_values(), labels):
                 widget.configure(text=f"{name} {value / scale:.{precision}f}{unit}")
 
         def adjust(index, delta):
+            """Apply one step to the selected value within its limits."""
             values = get_values()
             value = max(low, values[index] + delta)
             values[index] = min(high, value) if high is not None else value
@@ -191,14 +199,17 @@ class App:
         return refresh
 
     def load_calibration(self):
+        """Apply saved calibration and center the target when possible."""
         self.tracker.detector, self.tracker.platform = calibration_objects(self.config, self.tracker.detector, self.tracker.platform)
         if "calibration" in self.config and "servos" in self.config:
             self.tracker.target = self.tracker.platform.origin
 
     def notice(self, message):
+        """Update the action message below the camera."""
         self.message.set(message)
 
     def set_action(self, action, message):
+        """Switch actions, clear the previous path, and update the controls."""
         self.action = action
         self.tracker.path = None
         self.refresh_pid_controls()
@@ -215,24 +226,30 @@ class App:
         self.notice(message)
 
     def cancel_action(self):
+        """End the current action and return to manual targeting."""
         self.set_action(None, "Click the camera view to set a target.")
 
     def center_target(self):
+        """Set the target to the platform center and cancel any path."""
         if self.tracker.platform is not None:
             self.tracker.target = self.tracker.platform.origin
             self.cancel_action()
 
     def start_ball_calibration(self):
+        """Start collecting ball color samples from camera clicks."""
         self.set_action("ball", "Click several spots on the ball, then save.")
 
     def start_platform_calibration(self):
+        """Start detecting RGB markers for platform calibration."""
         self.set_action("platform", "Looking for the red, green, and blue platform markers.")
 
     def reset_candidate(self):
+        """Discard the unsaved calibration and disable saving."""
         self.candidate = None
         self.save_button.state(["disabled"])
 
     def save_calibration(self):
+        """Save and apply the candidate calibration, then clear graph history."""
         if self.candidate is None or self.tracker.frame is None:
             return
         try:
@@ -251,17 +268,17 @@ class App:
         self.set_action(None, "Calibration saved. Click the camera view to set a target.")
 
     def start_mode(self, mode):
+        """Select a firmware mode and identify each new hold-level request."""
         message = MODE_LABELS[mode]
-        if mode in (Status.AUTOTUNE, Status.AUTOLEVEL):
-            message += " · firmware placeholder"
-        elif mode == Status.SWEEP:
-            self.sweep_id = (self.sweep_id + 1) & 0xFFFFFFFF
-            message += " · sweeps once, then holds level"
+        if mode in HOLD_LEVEL_MODES:
+            self.mode_request_id = (self.mode_request_id + 1) & 0xFFFFFFFF
+            message += " · holds level" if mode == Status.LEVEL else " · holds level afterward"
         if self.preview:
             message += " · preview"
         self.set_action(mode, message)
 
     def start_path(self, shape):
+        """Start a path from the latest visible ball position if it fits."""
         if (self.tracker.platform is None or self.tracker.detection is None
                 or time.monotonic() - self.tracker.frame_time > 0.25):
             self.notice("Calibrate the platform and bring the ball into view first.")
@@ -275,6 +292,7 @@ class App:
         self.refresh_pid_controls()
 
     def click_camera(self, event):
+        """Map a canvas click to a ball sample or a platform target."""
         if self.tracker.frame is None or self.display_transform is None:
             return
         left, top, scale_x, scale_y = self.display_transform
@@ -293,6 +311,7 @@ class App:
             self.cancel_action()
 
     def process_frame(self, now, frame):
+        """Update calibration previews and pass the frame to the tracker."""
         if self.action == "platform" and self.candidate is None:
             self.candidate = find_platform(frame)
             if self.candidate is not None:
@@ -306,6 +325,7 @@ class App:
             self.set_action(None, "Trajectory complete.")
 
     def show_frame(self):
+        """Draw overlays and fit the camera image to the canvas."""
         frame = self.tracker.frame.copy()
         platform = self.tracker.platform
         if self.action == "platform" and self.candidate is not None:
@@ -327,6 +347,7 @@ class App:
         width, height = max(1, round(w * scale)), max(1, round(h * scale))
         left, top = (canvas_w - width) // 2, (canvas_h - height) // 2
         rgb = cv2.cvtColor(cv2.resize(frame, (width, height)), cv2.COLOR_BGR2RGB)
+        # Encode the frame in a format Tk can load directly.
         ppm = f"P6\n{width} {height}\n255\n".encode("ascii") + rgb.tobytes()
         self.photo = tk.PhotoImage(data=ppm, format="PPM")
         self.camera.coords(self.image_id, left, top)
@@ -334,6 +355,7 @@ class App:
         self.display_transform = left, top, width / w, height / h
 
     def tick(self):
+        """Consume camera updates, queue commands, and refresh the displays."""
         while True:
             try:
                 source, message = self.hardware.messages.get_nowait()
@@ -357,7 +379,7 @@ class App:
         now = time.monotonic()
         if sample is not None or now - self.last_sent >= 0.08:
             if not self.preview:
-                self.tracker.send_command(self.hardware, now, self.action, self.gains, self.trims, self.sweep_id)
+                self.tracker.send_command(self.hardware, now, self.action, self.gains, self.trims, self.mode_request_id)
             self.last_sent = now
         if now - self.last_graph >= 0.10:
             for i, canvas in enumerate(self.graphs):
@@ -368,6 +390,7 @@ class App:
         self.job = self.root.after(15, self.tick)
 
     def close(self):
+        """Stop GUI updates and signal the hardware workers to stop."""
         if self.job is not None:
             self.root.after_cancel(self.job)
         self.hardware.stop.set()
@@ -377,6 +400,7 @@ class App:
 
 
 def main():
+    """Parse startup options and run the Tk event loop."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--preview", action="store_true", help="Run the interface without Arduino serial.")
     parser.add_argument("--port", default=ARDUINO_SERIAL_PORT, help="Arduino serial port.")

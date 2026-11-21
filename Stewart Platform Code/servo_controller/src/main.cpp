@@ -4,6 +4,8 @@
 #include "freq_response_servo.h"
 
 BallData ballData; // Ball data to be fed to the controller (x,y,t,xr,yr)
+
+// Counts valid samples in the tracking history, up to CAMERA_SAMPLES.
 uint16_t num_samples = 0;
 
 #define SYNC_BYTES 3
@@ -21,6 +23,7 @@ enum Status : uint8_t {
     CALIBRATE_SERVOS = 7,
 };
 
+// The fields after the sync word, in the same order as the Python packet.
 struct CameraPacket {
     uint8_t status;
     uint8_t servo_A_pin;
@@ -35,6 +38,8 @@ struct CameraPacket {
 };
 
 bool read_serial_port(CameraPacket *packet) {
+    // Static so it keeps partial packets between calls in case the 
+    // rest of the bytes arrive later.
     static uint8_t buf[PACKET_SIZE_BYTES] = {0};
     static size_t buf_count = 0;
 
@@ -58,6 +63,7 @@ bool read_serial_port(CameraPacket *packet) {
         packet->servo_B_pin = buf[SYNC_BYTES + 2];
         packet->servo_C_pin = buf[SYNC_BYTES + 3];
 
+        // Skip the sync bytes, status, and three servo pins to get to the floats.
         size_t offset = SYNC_BYTES + 4;
 
         memcpy(&packet->x, buf + offset, sizeof(float));
@@ -85,36 +91,42 @@ bool read_serial_port(CameraPacket *packet) {
     return false;
 }
 
+static constexpr uint32_t SWEEP_STEP_MS = 100;
+static constexpr int SWEEP_LIMIT = 15;
+static constexpr uint32_t SWEEP_AXIS_MS = (4 * SWEEP_LIMIT + 1) * SWEEP_STEP_MS;
+static constexpr uint32_t SWEEP_DURATION_MS = 1000 + 2 * SWEEP_AXIS_MS + 500;
+
 // Replay the original X and Y sweep without blocking serial input.
 void update_servo_sweep(uint32_t elapsed_ms, BallData* data) {
-    const uint32_t STEP_MS = 100;
-    const int LIMIT = 15;
-    const uint32_t AXIS_MS = (4 * LIMIT + 1) * STEP_MS;
     static int previous_step = -1;
     if (elapsed_ms == 0) {
         previous_step = -1;
     }
+    // Hold level for the first second and advance one step every 100 ms after that.
     int step = 0;
     if (elapsed_ms >= 1000) {
-        step = min((elapsed_ms - 1000) / STEP_MS, (2 * AXIS_MS + 500) / STEP_MS) + 1;
+        step = min((elapsed_ms - 1000) / SWEEP_STEP_MS, (2 * SWEEP_AXIS_MS + 500) / SWEEP_STEP_MS) + 1;
     }
+    // Only send a new tilt when the sweep reaches a new step or restarts.
     if (elapsed_ms != 0 && step == previous_step) {
         return;
     }
     previous_step = step;
 
+    // Sweep X first, pause at level for 500 ms, then sweep Y and return to level.
     int x = 0;
     int y = 0;
-    if (elapsed_ms >= 1000 && elapsed_ms < 1000 + 2 * AXIS_MS + 500) {
+    if (elapsed_ms >= 1000 && elapsed_ms < SWEEP_DURATION_MS) {
         uint32_t offset = elapsed_ms - 1000;
-        const bool y_axis = offset >= AXIS_MS + 500;
+        const bool y_axis = offset >= SWEEP_AXIS_MS + 500;
         if (y_axis) {
-            offset -= AXIS_MS + 500;
+            offset -= SWEEP_AXIS_MS + 500;
         }
-        if (offset < AXIS_MS) {
-            const int index = offset / STEP_MS;
-            const int angle = index <= LIMIT ? -index :
-                              index <= 3 * LIMIT ? index - 2 * LIMIT : 4 * LIMIT - index;
+        if (offset < SWEEP_AXIS_MS) {
+            const int index = offset / SWEEP_STEP_MS;
+            // For each axis, move from 0 to -LIMIT to +LIMIT and back to 0.
+            const int angle = index <= SWEEP_LIMIT ? -index :
+                              index <= 3 * SWEEP_LIMIT ? index - 2 * SWEEP_LIMIT : 4 * SWEEP_LIMIT - index;
             if (y_axis) {
                 y = angle;
             } else {
@@ -130,116 +142,27 @@ void setup() {
     servoInit();
 }
 
-void loop() {
-    static Status active = BALL_LOST;
-    static uint32_t sweep_start = 0;
-    static uint32_t sweep_id = 0;
-    static uint32_t last_command = 0;
-    CameraPacket curr_packet;
-    CameraPacket latest_packet;
-    bool new_data = false;
-    bool mode_changed = false;
-    bool trim_changed = false;
+/**
+ * Refreshes the servo pins based on the incoming data from the computer
+ */
+static bool update_servo_pins(const CameraPacket& packet) {
+    const bool changed = ballData.servo_A_pin != packet.servo_A_pin ||
+                         ballData.servo_B_pin != packet.servo_B_pin ||
+                         ballData.servo_C_pin != packet.servo_C_pin;
+    ballData.servo_A_pin = packet.servo_A_pin;
+    ballData.servo_B_pin = packet.servo_B_pin;
+    ballData.servo_C_pin = packet.servo_C_pin;
+    return changed;
+}
 
-    // Keep the latest valid measurement while processing sideband trim updates
-    // independently of the selected action.
-    while (read_serial_port(&curr_packet)) {
-        const uint8_t a = curr_packet.servo_A_pin;
-        const uint8_t b = curr_packet.servo_B_pin;
-        const uint8_t c = curr_packet.servo_C_pin;
-
-        if (curr_packet.status == SERVO_TRIM) {
-            trim_changed |= setServoTrim(a, curr_packet.x);
-            trim_changed |= setServoTrim(b, curr_packet.y);
-            trim_changed |= setServoTrim(c, curr_packet.xr);
-            continue;
-        }
-        if (curr_packet.status > CALIBRATE_SERVOS) {
-            continue;
-        }
-
-        const Status next = static_cast<Status>(curr_packet.status);
-        if (next == TRACKING &&
-            (!isfinite(curr_packet.x) || !isfinite(curr_packet.y) ||
-             !isfinite(curr_packet.xr) || !isfinite(curr_packet.yr))) {
-            continue;
-        }
-
-        last_command = millis();
-        if (next == SWEEP && (active != SWEEP || curr_packet.frame_ms != sweep_id)) {
-            sweep_start = last_command;
-            sweep_id = curr_packet.frame_ms;
-            mode_changed = true;
-        }
-        if (active != next) {
-            mode_changed = true;
-            const bool tracking_or_lost =
-                (active == TRACKING || active == BALL_LOST) &&
-                (next == TRACKING || next == BALL_LOST);
-            if (!tracking_or_lost) {
-                num_samples = 0;
-            }
-            pid_reset();
-            active = next;
-        }
-        if (active == TRACKING) {
-            latest_packet = curr_packet;
-            new_data = true;
-        } else {
-            new_data = false;
-            mode_changed |= ballData.servo_A_pin != a || ballData.servo_B_pin != b ||
-                            ballData.servo_C_pin != c;
-            ballData.servo_A_pin = a;
-            ballData.servo_B_pin = b;
-            ballData.servo_C_pin = c;
-        }
-    }
-
-    if (active == SWEEP) {
-        const uint32_t now = millis();
-        if (now - last_command > 500) {
-            active = LEVEL;
-            setTilt(0, 0, &ballData);
-            return;
-        }
-        update_servo_sweep(mode_changed ? 0 : now - sweep_start, &ballData);
-        if (trim_changed) {
-            refreshServoTrim(&ballData);
-        }
-        return;
-    }
-
-    switch (active) {
-        case LEVEL:
-        case CALIBRATE_SERVOS:
-            if (mode_changed || trim_changed) {
-                setTilt(0, 0, &ballData);
-            }
-            return;
-
-        case AUTOTUNE:
-            set_motor_pins(curr_packet.servo_A_pin,curr_packet.servo_B_pin,curr_packet.servo_C_pin);
-            run_sweep_X();
-            run_sweep_Y();
-            active=LEVEL;
-            break;
-        case AUTOLEVEL:
-            // Reserved for future automatic leveling.
-            break;
-
-        default:
-            break;
-    }
-
-    if (trim_changed) {
-        refreshServoTrim(&ballData);
-    }
-    if (!new_data) {
-        return;
-    }
-
+/**
+ * Update the ball tracking state by refreshing camera samples using the latest packet
+ * and tilting the platform accordingly
+ */
+static void update_tracking(const CameraPacket& packet) {
     if (num_samples > 0) {
-        const uint32_t gap = latest_packet.frame_ms - ballData.t[CAMERA_SAMPLES - 1];
+        const uint32_t gap = packet.frame_ms - ballData.t[CAMERA_SAMPLES - 1];
+        // The PC can resend its last frame. Only use it once in the PID history.
         if (gap == 0) {
             return;
         }
@@ -259,16 +182,14 @@ void loop() {
     }
 
     // Store latest camera measurement
-    ballData.status = latest_packet.status;
-    ballData.servo_A_pin = latest_packet.servo_A_pin;
-    ballData.servo_B_pin = latest_packet.servo_B_pin;
-    ballData.servo_C_pin = latest_packet.servo_C_pin;
+    ballData.status = packet.status;
+    update_servo_pins(packet);
 
-    ballData.x[CAMERA_SAMPLES - 1] = latest_packet.x;
-    ballData.y[CAMERA_SAMPLES - 1] = latest_packet.y;
-    ballData.xr[CAMERA_SAMPLES - 1] = latest_packet.xr;
-    ballData.yr[CAMERA_SAMPLES - 1] = latest_packet.yr;
-    ballData.t[CAMERA_SAMPLES - 1] = latest_packet.frame_ms;
+    ballData.x[CAMERA_SAMPLES - 1] = packet.x;
+    ballData.y[CAMERA_SAMPLES - 1] = packet.y;
+    ballData.xr[CAMERA_SAMPLES - 1] = packet.xr;
+    ballData.yr[CAMERA_SAMPLES - 1] = packet.yr;
+    ballData.t[CAMERA_SAMPLES - 1] = packet.frame_ms;
 
     // Only run controller after ballData buffers have filled
     if (num_samples < CAMERA_SAMPLES) {
@@ -276,7 +197,8 @@ void loop() {
     }
 
     if (num_samples >= CAMERA_SAMPLES) {
-        pid_set_gains(latest_packet.gains[0], latest_packet.gains[1], latest_packet.gains[2]);
+        pid_set_gains(packet.gains[0], packet.gains[1], packet.gains[2]);
+        // Save the integral so we can undo this step if the tilt hits a limit.
         pid_save_integral();
         float thetax = pid_get_xtilt(&ballData);
         float thetay = pid_get_ytilt(&ballData);
@@ -298,5 +220,168 @@ void loop() {
             // Serial.print(F(" limited="));
             // Serial.println(limited);
         }
+    }
+}
+
+
+void loop() {
+    // Keep the current operating mode and sweep timing between calls to loop().
+    static Status active = BALL_LOST;
+    static uint32_t sweep_start = 0;
+    static uint32_t sweep_id = 0;
+
+    CameraPacket packet;
+    // Pending measurement for this pass through loop(). Each valid tracking packet replaces it.
+    CameraPacket latest_tracking;
+    bool new_tracking = false;
+    bool mode_changed = false;
+    bool trim_changed = false;
+
+    // Read all available packets before running the platform. The last accepted mode wins.
+    while (read_serial_port(&packet)) {
+        const Status next = static_cast<Status>(packet.status);
+        bool restart_sweep = false;
+
+        /*
+        'next' is the status in the current incoming packet. 'active' is the currently-running mode.
+
+        - switch (next) runs for each packet. It decides whether to accept the packet and what data to keep. 
+          For example, a valid TRACKING packet replaces the pending ball measurement. A SERVO_TRIM packet 
+          updates the trims and leaves active alone.
+
+        - switch (active) runs once after the serial queue is drained. It decides what the platform should do now. 
+          Tracking uses the latest valid measurement, and a sweep can advance even if no new packet arrived.
+        
+          For example, if two TRACKING packets arrive back to back, switch(next) reads both and keeps 
+          the newer measurement. The second switch, switch(active) runs PID once using that measurement.
+        */
+
+        // Queue the next actions according to the incoming packet type
+        switch (next) {
+            case SERVO_TRIM:
+                // Trim packets leave the active mode alone.
+                trim_changed |= setServoTrim(packet.servo_A_pin, packet.x);
+                trim_changed |= setServoTrim(packet.servo_B_pin, packet.y);
+                trim_changed |= setServoTrim(packet.servo_C_pin, packet.xr);
+                continue;
+
+            case TRACKING:
+                // Ignore invalid coordinates and keep any valid measurement already received.
+                if (!isfinite(packet.x) || !isfinite(packet.y) ||
+                    !isfinite(packet.xr) || !isfinite(packet.yr)) {
+                    continue;
+                }
+                latest_tracking = packet;
+                new_tracking = true;
+                break;
+
+            case SWEEP:
+                // The PC uses frame_ms as a sweep ID. Repeated IDs keep the current sweep going.
+                if (active != SWEEP || packet.frame_ms != sweep_id) {
+                    sweep_id = packet.frame_ms;
+                    mode_changed = true;
+                    restart_sweep = true;
+                }
+                // Fall through to update the servo mapping.
+            case BALL_LOST:
+            case LEVEL:
+            case AUTOTUNE:
+            case AUTOLEVEL:
+            case CALIBRATE_SERVOS:
+                // These modes do not use ball positions. Drop any pending tracking update
+                // from this pass through loop(), but keep the servo pin mapping from the packet.
+                new_tracking = false;
+                mode_changed |= update_servo_pins(packet);
+                break;
+
+            default:
+                continue;
+        }
+
+        if (restart_sweep) {
+            sweep_start = millis();
+        }
+        if (active != next) {
+            // Packet type changed, must adjust action
+            mode_changed = true;
+            const bool tracking_or_lost = (active == TRACKING || active == BALL_LOST) && (next == TRACKING || next == BALL_LOST);
+            if (!tracking_or_lost) {
+                // Keep the history when the ball disappears or returns. Start fresh
+                // when switching to or from another operating mode.
+                num_samples = 0;
+            }
+            pid_reset();
+            active = next;
+        }
+    }
+
+    // Apply only the active mode. Sweep can advance without new serial data.
+    switch (active) {
+        case TRACKING:
+            if (trim_changed) {
+                refreshServoTrim(&ballData);
+            }
+            if (new_tracking) {
+                update_tracking(latest_tracking);
+            }
+            break;
+
+        case BALL_LOST:
+            // Hold the last tilt and apply any new trims while waiting for the ball.
+            if (trim_changed) {
+                refreshServoTrim(&ballData);
+            }
+            break;
+
+        case LEVEL:
+        case CALIBRATE_SERVOS:
+            // Hold neutral tilt and update it if the mode, pin mapping, or trims change.
+            if (mode_changed || trim_changed) {
+                setTilt(0, 0, &ballData);
+            }
+            break;
+
+        case AUTOTUNE: {
+            // Run both axes from one command without waiting for a serial prompt.
+            const Mode previous_mode = current_mode;
+            current_mode = Mode::TRANSIENT_IT;
+            set_motor_pins(ballData.servo_A_pin, ballData.servo_B_pin, ballData.servo_C_pin);
+            run_sweep_X();
+            run_sweep_Y();
+
+            // Done autotuning
+            current_mode = previous_mode;
+            active = LEVEL;
+            setTilt(0, 0, &ballData);
+            break;
+        }
+
+        case AUTOLEVEL:
+            // Automatic leveling is still a placeholder.
+
+             /* Add future code right here */
+
+            active = LEVEL;
+            setTilt(0, 0, &ballData);
+            break;
+
+        case SWEEP: {
+            const uint32_t now = millis();
+            // A single command runs the full sweep, then leaves the platform level.
+            if (now - sweep_start >= SWEEP_DURATION_MS) {
+                active = LEVEL;
+                setTilt(0, 0, &ballData);
+                break;
+            }
+            update_servo_sweep(mode_changed ? 0 : now - sweep_start, &ballData);
+            if (trim_changed) {
+                refreshServoTrim(&ballData);
+            }
+            break;
+        }
+
+        case SERVO_TRIM:
+            // Handled on receipt and never selected as an active mode.
+            break;
     }
 }
