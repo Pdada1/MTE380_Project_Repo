@@ -18,7 +18,7 @@
 #define SERVO_A_HORIZ 88.0 // Horizontal position (linkage parallel to gnd)
 #define SERVO_B_MAX 113.0
 #define SERVO_B_MIN 65.0
-#define SERVO_B_HORIZ 86.0
+#define SERVO_B_HORIZ 88.0
 #define SERVO_C_MAX 106.0
 #define SERVO_C_MIN 47.0
 #define SERVO_C_HORIZ 71.0
