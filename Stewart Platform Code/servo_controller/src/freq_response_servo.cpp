@@ -82,6 +82,7 @@ void run_sweep(char axis)
             Serial.print("Start Frequency Run for ");
             Serial.print(freq);
             Serial.println("?");
+            while (Serial.available()) Serial.read(); 
             while (!wait_for_pc())
             {
             } // start each frequency run
