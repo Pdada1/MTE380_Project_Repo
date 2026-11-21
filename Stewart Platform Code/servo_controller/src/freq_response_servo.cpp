@@ -23,12 +23,12 @@ Reset the platform to level and wait for the computer to tell it to continue?
 #define G_MM_S2 9810.0f
 #define MIN_AMP_DEG 1.0f
 
-#define PROCEED_CHAR 0xC
+#define PROCEED_CHAR 0xA
 
 BallData sweep_ball_data;
 unsigned long time_us;
 
-Mode current_mode = Mode::TRANSIENT_IT;
+Mode current_mode = Mode::HUMAN_IN_LOOP;
 
 // Amplitude (deg) that keeps ball travel near BALL_EXTENT_MM at this frequency.
 float amp_for_freq(float freq)
@@ -41,9 +41,9 @@ float amp_for_freq(float freq)
 
 // Generate a sinusoid of angles between Angle Min and Angle Max amplitude as a sin wave of a given freq
 // Use the freq in Hz
-double generate_sin_angle(float freq, int point, float amp)
+double generate_cos_angle(float freq, int point, float amp)
 {
-    return amp * sin(MIN_TSTEP * point * 2 * PI * freq);
+    return -amp * cos(MIN_TSTEP * point * 2 * PI * freq);
 }
 
 bool wait_for_pc()
@@ -52,6 +52,7 @@ bool wait_for_pc()
     {
     } // block until the PC sends anything
     int byte = Serial.read();
+    Serial.print(byte);
     return byte == PROCEED_CHAR;
 }
 
@@ -103,7 +104,7 @@ void run_sweep(char axis)
 
         for (int i = 0; i < total_points; i++)
         {
-            float angle = generate_sin_angle(freq, i, amp);
+            float angle = generate_cos_angle(freq, i, amp);
 
             if (axis == 'x')
                 setTilt(angle, 0, &sweep_ball_data);

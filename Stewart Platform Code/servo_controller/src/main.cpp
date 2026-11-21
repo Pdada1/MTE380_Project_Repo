@@ -352,7 +352,7 @@ void loop() {
         case AUTOTUNE: {
             // Run both axes from one command without waiting for a serial prompt.
             const Mode previous_mode = current_mode;
-            current_mode = Mode::TRANSIENT_IT;
+            current_mode = Mode::HUMAN_IN_LOOP;
 
             // Actual autotuning code goes here:
             set_motor_pins(ballData.servo_A_pin, ballData.servo_B_pin, ballData.servo_C_pin);
