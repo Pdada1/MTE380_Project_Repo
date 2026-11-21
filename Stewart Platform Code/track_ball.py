@@ -18,7 +18,7 @@ from helper import CONFIG_PATH, SERVO_PINS, BallDetector, Platform, draw_ball, o
 
 SYNC = bytes((0x0B, 0x00, 0x0B))
 PACKET = struct.Struct("<3sB3B4f")
-ARDUINO_SERIAL_PORT = "COM6"
+ARDUINO_SERIAL_PORT = "COM5"
 BAUD_RATE = 115200
 WINDOW = "Platform Tracking"
 

@@ -33,7 +33,7 @@
 
 #define SHIELD_ADDR 0x40
 
-#define CAMERA_SAMPLES 1
+#define CAMERA_SAMPLES 12 //Must be >= POS_SAMPLES and VEL_SAMPLES and ACC_SAMPLES
 
 struct BallData { //Struct to keep track of all relevant ball data
     float x[CAMERA_SAMPLES] = {0}; //ordered old measurements -> new measurements

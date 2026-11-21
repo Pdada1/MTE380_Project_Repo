@@ -3,6 +3,7 @@
 #include "controller.h"
 
 BallData ballData; //Ball data to be fed to the controller (x,y,t,xr,yr)
+RotationData rotationData; //Rotation data for rotation fitting
 uint16_t num_samples = 0;
 
 // #define CALIBRATE_SERVOS /* Uncomment to enable manual servo calibration mode */
@@ -80,9 +81,50 @@ void loop() {
             float thetay = pid_get_ytilt(&ballData);
             setTilt(thetax, thetay, &ballData);
             
+            read_rotation_data(&rotationData, &ballData);
+            fit_rotation_data(&rotationData);
+
+            Serial.print(rotationData.msx, 3);
+            Serial.print(' ');
+            Serial.print(rotationData.msy, 3);
+            Serial.print(' ');
+            Serial.print(rotationData.theta0, 3);
+            Serial.print(' ');
+            float ahat[2] = {0};
+            find_ahat(rotationData.msx, rotationData.msy, rotationData.theta0, thetax, thetay, ahat);
+            Serial.print(ahat[0], 3);
+            Serial.print(' ');
+            Serial.print(ahat[1], 3);
+            Serial.print(' ');
+            Serial.print(-sin(thetax*PI/180), 3);
+            Serial.print(' ');
+            Serial.print(-sin(thetay*PI/180), 3);
+            Serial.println(' ')
+
             // Serial.print(thetax);
             // Serial.print(' ');
             // Serial.println(thetay);
+
+            //t, x, y, ax, ay, sin(thetax), sin(thetay)
+            // Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);
+            // Serial.print(' ');
+            // Serial.print(ballData.x[CAMERA_SAMPLES-1], 3);
+            // Serial.print(' ');
+            // Serial.print(ballData.y[CAMERA_SAMPLES-1], 3);
+            // Serial.print(' ');
+            // Serial.print(vel_av(&ballData, 'x'), 3);
+            // Serial.print(' ');
+            // Serial.print(vel_av(&ballData, 'y'), 3);
+            // Serial.print(' ');
+            // Serial.print(acc_av(&ballData, 'x'), 3);
+            // Serial.print(' ');
+            // Serial.print(acc_av(&ballData, 'y'), 3);
+            // Serial.print(' ');
+            // Serial.print(-sin(thetax*PI/180), 3);
+            // Serial.print(' ');
+            // Serial.print(-sin(thetay*PI/180), 3);
+            // Serial.println(' ');
+            
         }
     }
 #endif
