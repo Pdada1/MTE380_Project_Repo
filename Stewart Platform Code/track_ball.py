@@ -219,6 +219,7 @@ class History:
     def __init__(self):
         """Initialize the plot buffer and derivative state."""
         self.samples = deque()
+        self.freq = None
         self.reset_derivatives()
 
     def reset_derivatives(self):
@@ -233,9 +234,11 @@ class History:
 
     def add(self, now, ball, target, freq=None):
         """Record position error and estimate ball velocity and acceleration."""
+        if freq is None:
+            freq=self.freq
         if ball is None:
             self.reset_derivatives()
-            self.samples.append((now, (None, None, None)))
+            self.samples.append((now, (None, None, None,freq)))
             return
 
         error = tuple(b - t for b, t in zip(ball, target))
@@ -251,7 +254,7 @@ class History:
                                          for v, p in zip(velocity, last_velocity))
         self.velocity = (velocity, dt) if velocity is not None else None
         self.previous = now, ball
-        self.samples.append((now, (error, velocity, acceleration, ball, freq)))
+        self.samples.append((now, (error, velocity, acceleration, freq)))
 
 
 class Tracker:
