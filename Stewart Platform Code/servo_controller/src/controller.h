@@ -13,7 +13,7 @@ void pid_reset();
 void pid_save_integral();
 void pid_restore_integral();
 
-float pid_get_xtilt(BallData* ball_data);
-float pid_get_ytilt(BallData* ball_data);
+float pid_get_xtilt(BallData* ball_data, uint16_t fresh_samples = CAMERA_SAMPLES);
+float pid_get_ytilt(BallData* ball_data, uint16_t fresh_samples = CAMERA_SAMPLES);
 
 #endif

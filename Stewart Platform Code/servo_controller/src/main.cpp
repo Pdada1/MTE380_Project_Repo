@@ -159,7 +159,7 @@ static bool update_servo_pins(const CameraPacket& packet) {
  * Update the ball tracking state by refreshing camera samples using the latest packet
  * and tilting the platform accordingly
  */
-static void update_tracking(const CameraPacket& packet) {
+static void update_tracking(const CameraPacket& packet, uint16_t& fresh_samples) {
     if (num_samples > 0) {
         const uint32_t gap = packet.frame_ms - ballData.t[CAMERA_SAMPLES - 1];
         // The PC can resend its last frame. Only use it once in the PID history.
@@ -167,7 +167,8 @@ static void update_tracking(const CameraPacket& packet) {
             return;
         }
         if (gap > 250) {
-            // Reset PID state after a long gap, while retaining the valid sample history.
+            // Reset the integral after a long gap and rebuild the PID windows.
+            fresh_samples = 0;
             pid_reset();
         }
     }
@@ -196,12 +197,16 @@ static void update_tracking(const CameraPacket& packet) {
         num_samples++;
     }
 
+    if (fresh_samples < CAMERA_SAMPLES) {
+        fresh_samples++;
+    }
+
     if (num_samples >= CAMERA_SAMPLES) {
         pid_set_gains(packet.gains[0], packet.gains[1], packet.gains[2]);
         // Save the integral so we can undo this step if the tilt hits a limit.
         pid_save_integral();
-        float thetax = pid_get_xtilt(&ballData);
-        float thetay = pid_get_ytilt(&ballData);
+        float thetax = pid_get_xtilt(&ballData, fresh_samples);
+        float thetay = pid_get_ytilt(&ballData, fresh_samples);
         const bool limited = setTilt(thetax, thetay, &ballData);
         if (limited) {
             pid_restore_integral();
@@ -227,6 +232,7 @@ static void update_tracking(const CameraPacket& packet) {
 void loop() {
     // Keep the current operating mode and sweep timing between calls to loop().
     static Status active = BALL_LOST;
+    static uint16_t fresh_samples = 0;
     static uint32_t sweep_start = 0;
     static uint32_t sweep_id = 0;
 
@@ -309,8 +315,10 @@ void loop() {
                 // Keep the history when the ball disappears or returns. Start fresh
                 // when switching to or from another operating mode.
                 num_samples = 0;
+                pid_reset();
             }
-            pid_reset();
+            // Keep the integral through brief detection loss, but restart the PID windows.
+            fresh_samples = 0;
             active = next;
         }
     }
@@ -322,7 +330,7 @@ void loop() {
                 refreshServoTrim(&ballData);
             }
             if (new_tracking) {
-                update_tracking(latest_tracking);
+                update_tracking(latest_tracking, fresh_samples);
             }
             break;
 

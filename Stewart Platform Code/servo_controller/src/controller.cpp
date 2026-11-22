@@ -113,19 +113,25 @@ float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 
     }
 }
 
-float pid_get_tilt(BallData* ball_data, char axis) { //Gets tilt for axis 'x' or 'y'
-    float e = e_av(ball_data, axis);
-    float int_e = inte(ball_data, axis);
-    float d_e = de_av(ball_data, axis);
+float pid_get_tilt(BallData* ball_data, char axis, uint16_t fresh_samples) { //Gets tilt for axis 'x' or 'y'
+    // Use the latest error until enough fresh frames are available to average it.
+    const int latest = CAMERA_SAMPLES - 1;
+    const float latest_error = axis == 'x' ? ball_data->x[latest] - ball_data->xr[latest]
+                                          : ball_data->y[latest] - ball_data->yr[latest];
+    const float e = fresh_samples >= POS_SAMPLES ? e_av(ball_data, axis) : latest_error;
+    
+    // Keep the saved correction on the first frame and skip velocity across the gap.
+    const float int_e = fresh_samples >= 2 ? inte(ball_data, axis) : (axis == 'x' ? int_ex : int_ey);
+    const float d_e = fresh_samples >= VEL_SAMPLES ? de_av(ball_data, axis) : 0.0f;
 
     float u = e*kp + int_e*ki + d_e*kd;
     return u;
 }
 
-float pid_get_xtilt(BallData* ball_data) {
-    return pid_get_tilt(ball_data, 'x');
+float pid_get_xtilt(BallData* ball_data, uint16_t fresh_samples) {
+    return pid_get_tilt(ball_data, 'x', fresh_samples);
 }
 
-float pid_get_ytilt(BallData* ball_data) {
-    return pid_get_tilt(ball_data, 'y');
+float pid_get_ytilt(BallData* ball_data, uint16_t fresh_samples) {
+    return pid_get_tilt(ball_data, 'y', fresh_samples);
 }
