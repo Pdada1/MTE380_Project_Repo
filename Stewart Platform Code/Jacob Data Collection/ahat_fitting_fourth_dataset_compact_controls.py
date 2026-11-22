@@ -535,6 +535,11 @@ class FittingApplication:
                 s=2,
                 label="ahatx measured"
             )
+            self.ax1.plot(
+                t, ahatx,
+                color="blue",
+                linewidth=0.5,
+            )
 
             self.ax1.scatter(
                 t,
@@ -549,7 +554,7 @@ class FittingApplication:
                 manual_x,
                 color="darkorange",
                 marker="D",
-                s=18,
+                s=12,
                 label="ahatx manual"
             )
 
@@ -560,6 +565,11 @@ class FittingApplication:
                 s=2,
                 label="Normalized -sin(thetax)"
             )
+            self.ax1.plot(
+                t, nx_normalized,
+                color="green",
+                linewidth=0.5,
+            )
 
             # Fitting samples
             self.ax1.scatter(
@@ -567,8 +577,7 @@ class FittingApplication:
                 ahatx[indices],
                 color="blue",
                 marker="x",
-                s=20,
-                label="Fitting samples"
+                s=20
             )
 
             self.ax1.scatter(
@@ -576,8 +585,7 @@ class FittingApplication:
                 nx_normalized[indices],
                 color="green",
                 marker="x",
-                s=20,
-                label="Fitting samples"
+                s=20
             )
 
             self.ax1.set_title("X Components")
@@ -596,6 +604,11 @@ class FittingApplication:
                 s=2,
                 label="ahaty measured"
             )
+            self.ax2.plot(
+                t, ahaty,
+                color="blue",
+                linewidth=0.5,
+            )
 
             self.ax2.scatter(
                 t,
@@ -610,7 +623,7 @@ class FittingApplication:
                 manual_y,
                 color="darkorange",
                 marker="D",
-                s=18,
+                s=12,
                 label="ahaty manual"
             )
 
@@ -621,6 +634,11 @@ class FittingApplication:
                 s=2,
                 label="Normalized -sin(thetay)"
             )
+            self.ax2.plot(
+                t, ny_normalized,
+                color="green",
+                linewidth=0.5,
+            )
 
             # Fitting samples
             self.ax2.scatter(
@@ -628,17 +646,15 @@ class FittingApplication:
                 ahaty[indices],
                 color="blue",
                 marker="x",
-                s=20,
-                label="Fitting samples"
-            )
+                s=20
+                )
 
             self.ax2.scatter(
                 t[indices],
                 ny_normalized[indices],
                 color="green",
                 marker="x",
-                s=20,
-                label="Fitting samples"
+                s=20
             )
 
             self.ax2.set_title("Y Components")

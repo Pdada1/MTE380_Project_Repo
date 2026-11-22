@@ -9,7 +9,7 @@
 #define I_LIMIT 1.0
 
 #define CONTROLLER_DELAY_MAX 2.0
-#define CONTROLLER_DELAY 1.5
+#define CONTROLLER_DELAY 0.55
 #define SAMPLE_RATE_APPROX 0.05
 #define FIT_SAMPLES 50
 
@@ -34,6 +34,5 @@ float acc_av(BallData* ball_data, char axis);
 
 void read_rotation_data(RotationData* rotation_data, BallData* ball_data);
 void fit_rotation_data(RotationData* rotation_data);
-void find_ahat(float msx, float msy, float theta0, float thetax, float thetay, float* ahat);
 
 #endif

@@ -84,27 +84,6 @@ void loop() {
             read_rotation_data(&rotationData, &ballData);
             fit_rotation_data(&rotationData);
 
-            // Serial.print(rotationData.msx, 3);
-            // Serial.print(' ');
-            // Serial.print(rotationData.msy, 3);
-            // Serial.print(' ');
-            // Serial.print(rotationData.theta0, 3);
-            // Serial.print(' ');
-            // float ahat[2] = {0};
-            // find_ahat(rotationData.msx, rotationData.msy, rotationData.theta0, thetax, thetay, ahat);
-            // Serial.print(ahat[0], 3);
-            // Serial.print(' ');
-            // Serial.print(ahat[1], 3);
-            // Serial.print(' ');
-            // Serial.print(-sin(thetax*PI/180), 3);
-            // Serial.print(' ');
-            // Serial.print(-sin(thetay*PI/180), 3);
-            // Serial.println(' ');
-
-            // Serial.print(thetax);
-            // Serial.print(' ');
-            // Serial.println(thetay);
-
             //t, x, y, ax, ay, sin(thetax), sin(thetay)
             Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);
             Serial.print(' ');
@@ -133,9 +112,9 @@ void loop() {
             Serial.print(accy/acc_norm, 3);
             Serial.print(' ');
             //Shifted thetax and thetay
-            Serial.print(-sin(rotationData.thetax_shifted), 3);
+            Serial.print(-sin(rotationData.thetax_shifted*PI/180), 3);
             Serial.print(' ');
-            Serial.print(-sin(rotationData.thetay_shifted), 3);
+            Serial.print(-sin(rotationData.thetay_shifted*PI/180), 3);
             Serial.println(' ');
             
         }
