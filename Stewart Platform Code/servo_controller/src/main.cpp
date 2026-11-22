@@ -322,10 +322,6 @@ void loop() {
                     restart_sweep = true;
                 }
                 // Fall through to update the servo mapping.
-            case BALL_LOST:
-            case LEVEL:
-            case AUTOTUNE:
-
             case AUTOTUNE_MM:
 
                 // Ignore invalid coordinates and keep any valid measurement already received.
@@ -355,6 +351,10 @@ void loop() {
                 }
 
                 break;
+
+            case BALL_LOST:
+            case LEVEL:
+            case AUTOTUNE:
             case AUTOLEVEL:
             case CALIBRATE_SERVOS:
                 // These modes do not use ball positions. Drop any pending tracking update
