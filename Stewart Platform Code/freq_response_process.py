@@ -1,9 +1,6 @@
 import numpy as np
 from numpy.polynomial import polynomial as P
-<<<<<<< HEAD
 from pathlib import Path
-=======
->>>>>>> 8895781 (Vibe Code. Will try tommorow)
 
 def fit_sinusoid(t, y, f):
     """
@@ -163,16 +160,24 @@ def zn_pid(Ku, Tu, rule="classic"):
     Ki = Kp / Ti        # = 1.2*Ku/Tu for classic
     Kd = Kp * Td        # = 0.075*Ku*Tu for classic
     return Kp, Ki, Kd
-<<<<<<< HEAD
 
 def load_run(path):
-    """Return (freq_hz, amp_deg, t, x, y) from one CSV, or None if it has no data."""
+    """Return (freq_hz, amp_deg, t, out) from one CSV, or None if it has no data.
+
+    out is the ball's position change along the swept axis. Older 3-column logs
+    (t, x, y) are still read by picking the swept axis column.
+    """
     with open(path) as f:
         meta = dict(item.split("=") for item in f.readline().lstrip("# ").split())
     data = np.loadtxt(path, delimiter=",", skiprows=2, ndmin=2)  # skip comment + header
     if len(data) < 10:
         return None
-    return float(meta["freq_hz"]), float(meta["amp_deg"]), data[:, 0], data[:, 1], data[:, 2]
+    if data.shape[1] >= 3:   # old format: pick the swept axis and remove its starting value
+        out = data[:, 1] if meta["axis"] == "x" else data[:, 2]
+        out = out - out[0]
+    else:
+        out = data[:, 1]
+    return float(meta["freq_hz"]), float(meta["amp_deg"]), data[:, 0], out
 
 def frequency_response(axis, folder="freq_logs", skip_cycles=1,
                        fmin=0.6, fmax=1.1, invert=True):
@@ -186,10 +191,9 @@ def frequency_response(axis, folder="freq_logs", skip_cycles=1,
         run = load_run(path)
         if run is None:
             continue
-        f, amp_deg, t, x, y = run
+        f, amp_deg, t, out = run
         if not fmin <= f <= fmax:
             continue
-        out = x if axis == "x" else y
         keep = t >= skip_cycles / f
         amp, phase, _ = fit_sinusoid(t[keep], out[keep], f)
         # The firmware's input is -amp*cos(wt), i.e. a cosine with phase pi.
@@ -215,5 +219,3 @@ def autotune_from_logs(folder="freq_logs", n=3, m=0, rule="classic", **kwargs):
         result = ultimate_gain(b, a)
         gains[axis] = zn_pid(result[0], result[1], rule) if result else None
     return gains
-=======
->>>>>>> 8895781 (Vibe Code. Will try tommorow)
