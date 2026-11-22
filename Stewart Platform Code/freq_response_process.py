@@ -1,5 +1,6 @@
 import numpy as np
 from numpy.polynomial import polynomial as P
+from pathlib import Path
 
 def fit_sinusoid(t, y, f):
     """
@@ -159,3 +160,54 @@ def zn_pid(Ku, Tu, rule="classic"):
     Ki = Kp / Ti        # = 1.2*Ku/Tu for classic
     Kd = Kp * Td        # = 0.075*Ku*Tu for classic
     return Kp, Ki, Kd
+
+def load_run(path):
+    """Return (freq_hz, amp_deg, t, x, y) from one CSV, or None if it has no data."""
+    with open(path) as f:
+        meta = dict(item.split("=") for item in f.readline().lstrip("# ").split())
+    data = np.loadtxt(path, delimiter=",", skiprows=2, ndmin=2)  # skip comment + header
+    if len(data) < 10:
+        return None
+    return float(meta["freq_hz"]), float(meta["amp_deg"]), data[:, 0], data[:, 1], data[:, 2]
+
+def frequency_response(axis, folder="freq_logs", skip_cycles=1,
+                       fmin=0.6, fmax=1.1, invert=True):
+    """Magnitude (radii/deg) and phase (deg) of ball position vs platform tilt.
+
+    invert=True adds 180 deg: a +tilt rolls the ball toward -axis, and the
+    controller's negative feedback relies on that, so the loop sees -G.
+    """
+    rows = []
+    for path in Path(folder).glob(f"{axis}_*Hz.csv"):
+        run = load_run(path)
+        if run is None:
+            continue
+        f, amp_deg, t, x, y = run
+        if not fmin <= f <= fmax:
+            continue
+        out = x if axis == "x" else y
+        keep = t >= skip_cycles / f
+        amp, phase, _ = fit_sinusoid(t[keep], out[keep], f)
+        # The firmware's input is -amp*cos(wt), i.e. a cosine with phase pi.
+        phase_deg = np.rad2deg(phase - np.pi) + (180 if invert else 0)
+        phase_deg = (phase_deg + 180) % 360 - 180
+        rows.append((f, amp / amp_deg, phase_deg))
+    if len(rows) < 4:
+        return None
+    f, mag, phase = np.array(sorted(rows)).T
+    return f, mag, phase
+
+
+def autotune_from_logs(folder="freq_logs", n=3, m=0, rule="classic", **kwargs):
+    """Fit each axis from its CSVs and return {axis: (Kp, Ki, Kd) or None}."""
+    gains = {}
+    for axis in ("x", "y"):
+        response = frequency_response(axis, folder, **kwargs)
+        if response is None:
+            gains[axis] = None
+            continue
+        f, mag, phase = response
+        b, a = fit_tf(2 * np.pi * f, mag, phase, n=n, m=m)
+        result = ultimate_gain(b, a)
+        gains[axis] = zn_pid(result[0], result[1], rule) if result else None
+    return gains

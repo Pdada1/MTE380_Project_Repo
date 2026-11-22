@@ -7,6 +7,7 @@ import time
 import tkinter as tk
 from tkinter import ttk
 from freq_response_log import RunLogger
+from freq_response_process import autotune_from_logs
 
 import cv2
 
@@ -345,7 +346,7 @@ class App:
             message += " · preview"
         self.set_action(mode, message)
 
-    def autotune_mode(self):
+    def autotune_mode(self, mode):
         """Select the autotuning firmware mode and latch onto it."""
         message = "Run the X and Y frequency sweeps, then hold level."
         if self.preview:
@@ -355,7 +356,25 @@ class App:
         self.mode_request_id = (self.mode_request_id + 1) & 0xFFFFFFFF
 
         # add stuff here    
-        self.set_action(Status.AUTOTUNE, message)
+        print("Entered Autotune Mode")
+        self.set_action(mode, message)
+
+    def show_autotune_result(self):
+        """Process the logged sweep and report the Ziegler-Nichols gains."""
+        try:
+            gains = autotune_from_logs()
+        except Exception as error:
+            self.set_action(None, f"Sweep done, but processing failed: {error}")
+            return
+        parts = []
+        for axis, g in gains.items():
+            if g is None:
+                parts.append(f"{axis.upper()}: no result")
+            else:
+                parts.append(f"{axis.upper()}: Kp={g[0]:.2f} Ki={g[1]:.2f} Kd={g[2]:.2f}")
+        text = " | ".join(parts)
+        print("Autotune result ->", text, flush=True)
+        self.set_action(None, "Sweep complete. " + text)
 
     def start_path(self, shape):
         """Collect polygon vertices or start a circle from the current ball."""
@@ -486,6 +505,8 @@ class App:
             except Empty:
                 break
             self.logger.on_line(t, line)
+            if line == "SWEEP_DONE":
+                self.show_autotune_result()
             
         while True:
             try:
