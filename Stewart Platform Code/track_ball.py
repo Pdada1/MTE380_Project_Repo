@@ -16,7 +16,7 @@ from helper import SERVO_PINS, open_camera
 SYNC = bytes((0x0B, 0x00, 0x0B))
 # Wire fields in order: sync, status, pins, ball XY, target XY, timestamp, PID gains.
 PACKET = struct.Struct("<3sB3B4fI3f")
-ARDUINO_SERIAL_PORT = "COM6"
+ARDUINO_SERIAL_PORT = "COM3"
 BAUD_RATE = 115200
 DEFAULT_GAINS = (4.5, 0.5, 3.7)
 TRAJECTORY_GAINS = (5.0, 0.8, 4.5)  # Kp, Ki, Kd for circle tracking
