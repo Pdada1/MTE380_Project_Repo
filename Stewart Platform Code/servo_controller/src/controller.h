@@ -8,8 +8,8 @@
 #define KD 3
 #define I_LIMIT 1.0
 
-#define CONTROLLER_DELAY_MAX 1.0
-#define CONTROLLER_DELAY 0.5
+#define CONTROLLER_DELAY_MAX 2.0
+#define CONTROLLER_DELAY 1.5
 #define SAMPLE_RATE_APPROX 0.05
 #define FIT_SAMPLES 50
 
@@ -22,6 +22,8 @@ struct RotationData { //Struct to keep track of all relevant rotation data
     float msx = 0;
     float msy = 0;
     float theta0 = 0;
+    float thetax_shifted = 0;
+    float thetay_shifted = 0;
 };
 
 float pid_get_xtilt(BallData* ball_data);
