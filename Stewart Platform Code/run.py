@@ -346,10 +346,13 @@ class App:
         self.set_action(mode, message)
 
     def autotune_mode(self):
-        """Select a firmware mode and identify each new hold-level request."""
+        """Select the autotuning firmware mode and latch onto it."""
         message = "Run the X and Y frequency sweeps, then hold level."
         if self.preview:
             message += " · preview"
+
+        # This mode latches on, i.e., does not require continuous packets
+        self.mode_request_id = (self.mode_request_id + 1) & 0xFFFFFFFF
 
         # add stuff here    
         self.set_action(Status.AUTOTUNE, message)
