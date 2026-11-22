@@ -70,6 +70,50 @@ def draw_history(history, canvas, now, index):
         if len(line) >= 4:
             canvas.create_line(*line, fill=color, width=2)
 
+def draw_freq_history(history, canvas, now):
+    """Plot X/Y position over time, marking where the sweep frequency changes."""
+    width, height = canvas.winfo_width(), canvas.winfo_height()
+    if width < 100 or height < 75:
+        return
+    canvas.delete("all")
+    left, right, top, bottom = 42, width - 12, 24, height - 23
+    data = [(t, v[0], v[3]) for t, v in history.samples]
+    limit = max((abs(c) for _, e, _ in data if e is not None for c in e), default=0)
+    limit = max(limit, 0.05)
+    for fraction, label in ((0, "-30 s"), (0.5, "-15 s"), (1, "Now")):
+        x = left + fraction * (right - left)
+        canvas.create_line(x, top, x, bottom, fill="#324052")
+        canvas.create_text(x, bottom + 11, text=label, fill="#a0afc1")
+    for fraction, value in ((0, limit), (0.5, 0), (1, -limit)):
+        y = top + fraction * (bottom - top)
+        canvas.create_line(left, y, right, y, fill="#324052")
+        canvas.create_text(left - 5, y, text=f"{value:.2g}", anchor="e", fill="#a0afc1")
+
+    def x_at(timestamp):
+        return right - (now - timestamp) / HISTORY_SECONDS * (right - left)
+
+    # Mark each frequency change with a dashed line and a Hz label.
+    previous_freq = None
+    for timestamp, _, freq in data:
+        if freq != previous_freq and freq is not None:
+            x = x_at(timestamp)
+            canvas.create_line(x, top, x, bottom, fill="#7a8aa0", dash=(3, 3))
+            canvas.create_text(x + 3, top - 8, text=f"{freq:.2f} Hz", anchor="w", fill="#d0dbe8")
+        previous_freq = freq
+
+    for axis, color in enumerate(("#48c9ee", "#ffa35c")):
+        line = []
+        previous_time = None
+        for timestamp, error, _ in data:
+            if error is None or (previous_time is not None and timestamp - previous_time > 0.25):
+                if len(line) >= 4:
+                    canvas.create_line(*line, fill=color, width=2)
+                line = []
+            if error is not None:
+                line.extend((x_at(timestamp), top + (1 - error[axis] / limit) * (bottom - top) / 2))
+            previous_time = timestamp
+        if len(line) >= 4:
+            canvas.create_line(*line, fill=color, width=2)
 
 class App:
     """Manage GUI controls, calibration actions, and display updates."""
@@ -94,6 +138,7 @@ class App:
         self.connection = tk.StringVar(value="Preview" if args.preview else f"Connecting to {args.port}...")
         self.camera_error = None
         self.build_ui()
+        self.build_freq_window()
         try:
             self.config = read_config()
             self.load_calibration()
@@ -168,6 +213,20 @@ class App:
             canvas = tk.Canvas(graphs, width=285, height=150, bg="#182331", highlightthickness=0)
             canvas.pack(fill="both", expand=True)
             self.graphs.append(canvas)
+
+    def build_freq_window(self):
+        """Create a separate window with a canvas for the frequency-run plot."""
+        self.freq_window = tk.Toplevel(self.root)
+        self.freq_window.title("Frequency Response Run")
+        self.freq_window.geometry("700x320")
+        self.freq_canvas = tk.Canvas(self.freq_window, bg="#182331", highlightthickness=0)
+        self.freq_canvas.pack(fill="both", expand=True)
+        self.freq_window.protocol("WM_DELETE_WINDOW", self.close_freq_window)
+
+    def close_freq_window(self):
+        """Close the frequency plot; the main interface keeps running."""
+        self.freq_canvas = None
+        self.freq_window.destroy()
 
     def control_row(self, parent, row, label, names, get_values, step, scale, low, high):
         """Build +/- controls and return a callback to refresh their values."""
@@ -375,6 +434,7 @@ class App:
         detector = self.tracker.detector
         if self.action == "ball" and self.candidate is not None:
             detector = self.candidate
+        self.tracker.history.freq = self.logger.run[1] if self.logger.run is not None else None
         if self.tracker.process_frame(now, frame, detector):
             self.set_action(None, "Trajectory complete.")
         self.logger.on_ball(now, self.tracker.ball)
@@ -452,6 +512,8 @@ class App:
         if now - self.last_graph >= 0.10:
             for i, canvas in enumerate(self.graphs):
                 draw_history(self.tracker.history, canvas, now, i)
+            if self.freq_canvas is not None:
+                draw_freq_history(self.tracker.history, self.freq_canvas, now)
             self.last_graph = now
         if self.camera_error is not None:
             self.notice(self.camera_error)
