@@ -357,6 +357,7 @@ void loop() {
             // Done autotuning
             active = LEVEL;
             setTilt(0, 0, &ballData);
+            Serial.println("SWEEP_DONE");
             break;
         }
 
