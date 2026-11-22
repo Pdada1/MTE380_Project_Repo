@@ -1,52 +1,52 @@
 {
   "camera": {
-    "index": 0,
-    "frame_width": 640,
-    "frame_height": 480
+    "index": 1,
+    "frame_width": 1280,
+    "frame_height": 720
   },
   "ball_detection": {
     "lower_hsv": [
-      4,
-      132,
-      103
+      1,
+      130,
+      70
     ],
     "upper_hsv": [
-      22,
+      23,
       255,
-      186
+      225
     ],
     "min_radius_px": 5
   },
   "calibration": {
     "origin_px": [
-      360.0989061075661,
-      270.1729638826895
+      542.8049638460035,
+      318.80525698651553
     ],
-    "platform_radius_px": 191.85173117581633,
+    "platform_radius_px": 251.20160659916505,
     "zero_degree_servo": 0
   },
   "servos": [
     {
       "index": 0,
       "point_px": [
-        227,
-        132
+        303,
+        244
       ],
       "pin": 0
     },
     {
       "index": 1,
       "point_px": [
-        296,
-        451
+        613,
+        560
       ],
       "pin": 2
     },
     {
       "index": 2,
       "point_px": [
-        545,
-        219
+        727,
+        148
       ],
       "pin": 1
     }
