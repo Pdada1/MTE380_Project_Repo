@@ -131,9 +131,9 @@ float pid_get_tilt(BallData* ball_data, char axis, bool autotune) { //Gets tilt 
         u = p + int_e * ki_a + d;
     }
     else {
-        p = e * KP;
-        d = d_e * KD;
-        u = p + int_e * KI + d;
+        p = e * kp;
+        d = d_e * kd;
+        u = p + int_e * ki + d;
     }
 
 
