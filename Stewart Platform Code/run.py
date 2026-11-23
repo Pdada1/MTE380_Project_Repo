@@ -325,7 +325,10 @@ class App:
                     self.add_polygon_point((x, y))
                 return
             self.tracker.target = (x, y)
-            self.cancel_action()
+            if self.action == Status.AUTOTUNE_MM:
+                self.notice("Autotune armed · target set, measuring rise time")
+            else:
+                self.cancel_action()
 
     def add_polygon_point(self, point):
         """Add a vertex without changing the current target."""

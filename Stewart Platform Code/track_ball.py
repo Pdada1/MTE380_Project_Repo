@@ -49,7 +49,7 @@ class Status(IntEnum):
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
 # they act like a latch. All other modes spam packets with their Status type
-HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE, Status.AUTOLEVEL, Status.AUTOTUNE_MM)
+HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE, Status.AUTOLEVEL)
 
 
 def put_latest(queue, item):
@@ -285,15 +285,19 @@ class Tracker:
         frame_ms = int((self.frame_time if self.frame_time is not None else now) * 1000) & 0xFFFFFFFF
         ball = (0.0, 0.0)
         target = self.platform.normalize(self.target) if self.platform is not None else (0.0, 0.0)
+
+        # @MM
         status = Status.BALL_LOST
-        if isinstance(action, Status):
+        if isinstance(action, Status) and action != Status.AUTOTUNE_MM:
             status = action
         elif action in ("ball", "platform"):
             status = Status.LEVEL
         elif (self.platform is not None and self.detection is not None
-              and now - self.frame_time <= 0.25):
-            status = Status.TRACKING
+            and now - self.frame_time <= 0.25):
+            status = Status.AUTOTUNE_MM if action == Status.AUTOTUNE_MM else Status.TRACKING
             ball = self.platform.normalize(self.detection[0])
+
+
         trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims, 0.0, 0, *DEFAULT_GAINS)
         # Each button press gets its own ID, even if it selects the same mode again.
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None

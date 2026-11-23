@@ -10,7 +10,8 @@ uint16_t num_samples = 0;
 
 // @MM
 bool use_autotune_pid = false;
-float e_prev = 0; 
+float e_prev = 0, xr_prev = 0, yr_prev = 0;
+; 
 long t_0 = 0;
 #define T_RISE_DESIRED 2000
 
@@ -358,7 +359,19 @@ void loop() {
         if (active != next) {
             // Packet type changed, must adjust action
             mode_changed = true;
-            bool tracking_or_lost = (active == TRACKING || active == BALL_LOST || active == AUTOTUNE_MM) && (next == TRACKING || next == BALL_LOST || next == AUTOTUNE_MM); 
+
+            if (next == AUTOTUNE_MM) {
+                xr_prev = packet.xr;
+                yr_prev = packet.yr;
+                // use_autotune_pid = false;
+            }
+            else {
+                use_autotune_pid = false;
+            }
+
+
+
+            bool tracking_or_lost = (active == TRACKING || active == BALL_LOST) && (next == TRACKING || next == BALL_LOST); 
             if (!tracking_or_lost) {
                 // Keep the history when the ball disappears or returns. Start fresh
                 // when switching to or from another operating mode.
@@ -408,7 +421,6 @@ void loop() {
             // 
 
 
-            static float xr_prev = 0, yr_prev = 0;
 
             // detect if set point has changed
             // if so, change PID parameters, and save when it changed
