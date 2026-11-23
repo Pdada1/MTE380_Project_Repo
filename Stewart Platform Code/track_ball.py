@@ -44,6 +44,7 @@ class Status(IntEnum):
     SWEEP = 5
     SERVO_TRIM = 6
     CALIBRATE_SERVOS = 7
+    SWEEP_DATA = 8
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
@@ -77,6 +78,8 @@ class Hardware:
         self.serial_thread = None
         self.firmware = Queue()
         self.proceed = Event()
+        self.rerun = Event()
+        self.abort = Event()
         if not preview:
             self.serial_thread = Thread(target=self.transmit, args=(port_name, debug), daemon=True)
             self.serial_thread.start()
@@ -129,8 +132,15 @@ class Hardware:
                         if self.proceed.is_set():
                             self.proceed.clear()
                             port.write(b"\x0a")
+                        # Redo key: the firmware steps back and offers the previous frequency.
+                        if self.rerun.is_set():
+                            self.rerun.clear()
+                            port.write(b"r")
+                        if self.abort.is_set():
+                            self.abort.clear()
+                            port.write(b"x")
                         try:
-                            trim, command, last_level, mode_request = self.commands.get(timeout=0.005)
+                            trim, command, last_level, mode_request, stream = self.commands.get(timeout=0.005)
                         except Empty:
                             continue
                         if trim != last_trim:
@@ -140,7 +150,10 @@ class Hardware:
                         if mode_request is None or mode_request != last_mode_request:
                             port.write(command)
                             last_mode_request = mode_request
+                        if stream is not None:
+                            port.write(stream)
                 finally:
+                    port.write(b"x")
                     if last_level is not None:
                         port.write(last_level)
         except Exception as error:
@@ -321,4 +334,10 @@ class Tracker:
             tracking_gains = tuple(value / 10 for value in self.active_gains(manual_gains))
         command = PACKET.pack(SYNC, status, *pins, *ball, *target, timestamp, *tracking_gains)
         level = PACKET.pack(SYNC, Status.LEVEL, *pins, 0, 0, 0, 0, frame_ms, *gains)
-        put_latest(hardware.commands, (trim, command, level, mode_request))
+        # During the autotune sweep the firmware keeps the ball in place from this stream.
+        stream = None
+        if (status == Status.AUTOTUNE and self.platform is not None and self.detection is not None
+                and now - self.frame_time <= 0.25):
+            stream = PACKET.pack(SYNC, Status.SWEEP_DATA, *pins,
+                                 *self.platform.normalize(self.detection[0]), *target, frame_ms, *gains)
+        put_latest(hardware.commands, (trim, command, level, mode_request, stream))

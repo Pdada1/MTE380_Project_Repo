@@ -1,4 +1,3 @@
-
 #include "camera_servo.h"
 #include "controller.h"
 #include "freq_response_servo.h"
@@ -21,6 +20,7 @@ enum Status : uint8_t {
     SWEEP = 5,
     SERVO_TRIM = 6,
     CALIBRATE_SERVOS = 7,
+    SWEEP_DATA = 8,   // ball/target stream the PC sends during the autotune sweep
 };
 
 // The fields after the sync word, in the same order as the Python packet.
@@ -37,14 +37,25 @@ struct CameraPacket {
     float gains[3];
 };
 
-bool read_serial_port(CameraPacket *packet) {
+// Reads packets from serial. Single-byte PC keys (PROCEED_CHAR, RERUN_CHAR) that arrive
+// between packets are stored in *key (if provided) instead of entering the packet buffer.
+bool read_serial_port(CameraPacket *packet, uint8_t *key = nullptr) {
     // Static so it keeps partial packets between calls in case the 
     // rest of the bytes arrive later.
     static uint8_t buf[PACKET_SIZE_BYTES] = {0};
     static size_t buf_count = 0;
 
     while (Serial.available() > 0) {
-        buf[buf_count++] = (uint8_t)Serial.read();
+        const uint8_t incoming = (uint8_t)Serial.read();
+        // Single-byte PC keys only count between packets, so a 0x0A inside a packet is safe.
+        if (buf_count == 0 &&
+            (incoming == PROCEED_CHAR || incoming == RERUN_CHAR || incoming == STOP_CHAR)) {
+            if (key != nullptr && *key != STOP_CHAR) {   // a stop request is never overwritten
+                *key = incoming;
+            }
+            continue;
+        }
+        buf[buf_count++] = incoming;
         if (buf_count >= SYNC_BYTES &&
             memcmp(buf, SYNC_WORD, SYNC_BYTES) != 0) {
             // Sync word not valid, shift buffer by one byte
@@ -156,19 +167,17 @@ static bool update_servo_pins(const CameraPacket& packet) {
 }
 
 /**
- * Update the ball tracking state by refreshing camera samples using the latest packet
- * and tilting the platform accordingly
+ * Shift a tracking packet into the sample history. Returns false for a repeated frame.
  */
-static void update_tracking(const CameraPacket& packet, uint16_t& fresh_samples) {
+static bool ingest_tracking(const CameraPacket& packet) {
     if (num_samples > 0) {
         const uint32_t gap = packet.frame_ms - ballData.t[CAMERA_SAMPLES - 1];
         // The PC can resend its last frame. Only use it once in the PID history.
         if (gap == 0) {
-            return;
+            return false;
         }
         if (gap > 250) {
-            // Reset the integral after a long gap and rebuild the PID windows.
-            fresh_samples = 0;
+            // Reset PID state after a long gap, while retaining the valid sample history.
             pid_reset();
         }
     }
@@ -196,43 +205,63 @@ static void update_tracking(const CameraPacket& packet, uint16_t& fresh_samples)
     if (num_samples < CAMERA_SAMPLES) {
         num_samples++;
     }
+    return true;
+}
 
-    if (fresh_samples < CAMERA_SAMPLES) {
-        fresh_samples++;
+/**
+ * Update the ball tracking state by refreshing camera samples using the latest packet
+ * and tilting the platform accordingly
+ */
+static void update_tracking(const CameraPacket& packet) {
+    if (!ingest_tracking(packet) || num_samples < CAMERA_SAMPLES) {
+        return;
     }
+    pid_set_gains(packet.gains[0], packet.gains[1], packet.gains[2]);
+    // Save the integral so we can undo this step if the tilt hits a limit.
+    pid_save_integral();
+    float thetax = pid_get_xtilt(&ballData);
+    float thetay = pid_get_ytilt(&ballData);
+    const bool limited = setTilt(thetax, thetay, &ballData);
+    if (limited) {
+        pid_restore_integral();
+    }
+}
 
-    if (num_samples >= CAMERA_SAMPLES) {
+/**
+ * Used by the blocking sweep loops. Reads serial, feeds the controller with SWEEP_DATA
+ * packets, and runs PID on the requested axes ('x', 'y' or 'b' for both), writing the
+ * tilts into *tx / *ty. Sets *updated when a new sample was processed.
+ * Returns a PC key byte (PROCEED_CHAR or RERUN_CHAR) or 0.
+ */
+uint8_t sweep_service(char axes, float* tx, float* ty, bool* updated) {
+    uint8_t key = 0;
+    *updated = false;
+    CameraPacket packet;
+    while (read_serial_port(&packet, &key)) {
+        if (packet.status != SWEEP_DATA ||
+            !isfinite(packet.x) || !isfinite(packet.y) ||
+            !isfinite(packet.xr) || !isfinite(packet.yr)) {
+            continue;
+        }
+        if (!ingest_tracking(packet) || num_samples < CAMERA_SAMPLES) {
+            continue;
+        }
         pid_set_gains(packet.gains[0], packet.gains[1], packet.gains[2]);
-        // Save the integral so we can undo this step if the tilt hits a limit.
-        pid_save_integral();
-        float thetax = pid_get_xtilt(&ballData, fresh_samples);
-        float thetay = pid_get_ytilt(&ballData, fresh_samples);
-        const bool limited = setTilt(thetax, thetay, &ballData);
-        if (limited) {
-            pid_restore_integral();
+        if (axes != 'y') {
+            *tx = pid_get_xtilt(&ballData);
         }
-
-        static uint32_t last_log_ms = 0;
-        const uint32_t now = millis();
-        if (now - last_log_ms >= 250 && Serial.availableForWrite() >= 56) {
-            last_log_ms = now;
-            // Serial.print(F("dt_ms="));
-            // Serial.print(ballData.t[CAMERA_SAMPLES - 1] - ballData.t[CAMERA_SAMPLES - 2]);
-            // Serial.print(F(" tilt="));
-            // Serial.print(thetax, 2);
-            // Serial.print('/');
-            // Serial.print(thetay, 2);
-            // Serial.print(F(" limited="));
-            // Serial.println(limited);
+        if (axes != 'x') {
+            *ty = pid_get_ytilt(&ballData);
         }
+        *updated = true;
     }
+    return key;
 }
 
 
 void loop() {
     // Keep the current operating mode and sweep timing between calls to loop().
     static Status active = BALL_LOST;
-    static uint16_t fresh_samples = 0;
     static uint32_t sweep_start = 0;
     static uint32_t sweep_id = 0;
 
@@ -301,6 +330,7 @@ void loop() {
                 break;
 
             default:
+                // Includes SWEEP_DATA, which is only used while an autotune sweep is running.
                 continue;
         }
 
@@ -315,10 +345,8 @@ void loop() {
                 // Keep the history when the ball disappears or returns. Start fresh
                 // when switching to or from another operating mode.
                 num_samples = 0;
-                pid_reset();
             }
-            // Keep the integral through brief detection loss, but restart the PID windows.
-            fresh_samples = 0;
+            pid_reset();
             active = next;
         }
     }
@@ -330,7 +358,7 @@ void loop() {
                 refreshServoTrim(&ballData);
             }
             if (new_tracking) {
-                update_tracking(latest_tracking, fresh_samples);
+                update_tracking(latest_tracking);
             }
             break;
 
@@ -354,18 +382,19 @@ void loop() {
             const Mode previous_mode = current_mode;
             current_mode = Mode::HUMAN_IN_LOOP;
 
-            // Actual autotuning code goes here:
+            sweep_aborted = false;
             set_motor_pins(ballData.servo_A_pin, ballData.servo_B_pin, ballData.servo_C_pin);
             run_sweep_X();
-            run_sweep_Y();
-
+            if (!sweep_aborted) {
+                run_sweep_Y();
+            }
+            Serial.println(sweep_aborted ? "SWEEP_ABORTED" : "SWEEP_DONE");
 
             current_mode = previous_mode;
 
             // Done autotuning
             active = LEVEL;
             setTilt(0, 0, &ballData);
-            Serial.println("SWEEP_DONE");
             break;
         }
 
@@ -394,6 +423,7 @@ void loop() {
         }
 
         case SERVO_TRIM:
+        case SWEEP_DATA:
             // Handled on receipt and never selected as an active mode.
             break;
     }

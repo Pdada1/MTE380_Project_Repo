@@ -28,6 +28,7 @@ ACTIONS = (
     ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),
     ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
     ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "autotune_mode", Status.AUTOTUNE),
+    ("Redo Frequency", "At a prompt, step back to repeat the previous frequency.", "redo_frequency"),
     ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
     ("Sweep Platform", "Sweep X and Y once, then hold level.", "start_mode", Status.SWEEP),
     ("Quit", "Close the interface.", "close"),
@@ -152,6 +153,9 @@ class App:
         self.root.bind("<Escape>", lambda event: self.cancel_action())
         self.root.bind("c", lambda event: self.center_target())
         self.root.bind("<space>", lambda event: self.hardware.proceed.set())
+        self.root.bind("r", lambda event: self.redo_frequency())
+        self.fps_count = 0
+        self.fps_t = time.monotonic()
         self.tick()
 
     def build_ui(self):
@@ -275,6 +279,8 @@ class App:
 
     def set_action(self, action, message):
         """Switch actions, clear the previous path, and update the controls."""
+        if self.action == Status.AUTOTUNE and action != Status.AUTOTUNE:
+            self.hardware.abort.set()   # leaving Autotune stops the sweep
         self.action = action
         self.polygon_points.clear()
         self.tracker.path = None
@@ -355,9 +361,12 @@ class App:
         # This mode latches on, i.e., does not require continuous packets
         self.mode_request_id = (self.mode_request_id + 1) & 0xFFFFFFFF
 
-        # add stuff here    
         print("Entered Autotune Mode")
         self.set_action(mode, message)
+
+    def redo_frequency(self):
+        """Ask the firmware to step back and repeat the previous frequency."""
+        self.hardware.rerun.set()
 
     def show_autotune_result(self):
         """Process the logged sweep and report the Ziegler-Nichols gains."""
@@ -460,6 +469,10 @@ class App:
         if self.tracker.process_frame(now, frame, detector):
             self.set_action(None, "Trajectory complete.")
         self.logger.on_ball(now, self.tracker.ball)
+        self.fps_count += 1
+        if now - self.fps_t >= 2:
+            print(f"{self.fps_count / (now - self.fps_t):.1f} frames/s processed", flush=True)
+            self.fps_count, self.fps_t = 0, now
 
     def show_frame(self):
         """Draw overlays and fit the camera image to the canvas."""
@@ -507,7 +520,11 @@ class App:
             self.logger.on_line(t, line)
             if line == "SWEEP_DONE":
                 self.show_autotune_result()
-            
+            if line == "SWEEP_ABORTED":
+                self.notice("Frequency sweep stopped.")
+            if line.startswith("Start Frequency Run"):
+                self.notice(f"{line} Space = go, R = repeat previous.")
+
         while True:
             try:
                 source, message = self.hardware.messages.get_nowait()
@@ -549,7 +566,7 @@ class App:
             self.root.after_cancel(self.job)
         self.hardware.stop.set()
         if self.hardware.serial_thread is not None:
-            self.hardware.serial_thread.join(timeout=0.25)
+            self.hardware.serial_thread.join(timeout=0.5)
         self.root.destroy()
 
 
@@ -561,8 +578,11 @@ def main():
     parser.add_argument("--serial-debug", action="store_true", help="Print Arduino serial output.")
     args = parser.parse_args()
     root = tk.Tk()
-    App(root, args)
-    root.mainloop()
+    app = App(root, args)
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        app.close()
 
 
 if __name__ == "__main__":
