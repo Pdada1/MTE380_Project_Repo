@@ -6,6 +6,8 @@ from queue import Empty
 import time
 import tkinter as tk
 from tkinter import ttk
+from freq_response_log import RunLogger
+from freq_response_process import autotune_from_logs
 
 import cv2
 
@@ -24,7 +26,8 @@ ACTIONS = (
     ("Draw Circle", "Follow a circle starting at the ball.", "start_path", "circle"),
     ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),
     ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
-    ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "start_mode", Status.AUTOTUNE),
+    ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "autotune_mode", Status.AUTOTUNE),
+    ("Redo Frequency", "At a prompt, step back to repeat the previous frequency.", "redo_frequency"),
     ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
     ("Sweep Platform", "Sweep X and Y once, then hold level.", "start_mode", Status.SWEEP),
     ("Quit", "Close the interface.", "close"),
@@ -68,6 +71,50 @@ def draw_history(history, canvas, now, index):
         if len(line) >= 4:
             canvas.create_line(*line, fill=color, width=2)
 
+def draw_freq_history(history, canvas, now):
+    """Plot X/Y position over time, marking where the sweep frequency changes."""
+    width, height = canvas.winfo_width(), canvas.winfo_height()
+    if width < 100 or height < 75:
+        return
+    canvas.delete("all")
+    left, right, top, bottom = 42, width - 12, 24, height - 23
+    data = [(t, v[0], v[3]) for t, v in history.samples]
+    limit = max((abs(c) for _, e, _ in data if e is not None for c in e), default=0)
+    limit = max(limit, 0.05)
+    for fraction, label in ((0, "-30 s"), (0.5, "-15 s"), (1, "Now")):
+        x = left + fraction * (right - left)
+        canvas.create_line(x, top, x, bottom, fill="#324052")
+        canvas.create_text(x, bottom + 11, text=label, fill="#a0afc1")
+    for fraction, value in ((0, limit), (0.5, 0), (1, -limit)):
+        y = top + fraction * (bottom - top)
+        canvas.create_line(left, y, right, y, fill="#324052")
+        canvas.create_text(left - 5, y, text=f"{value:.2g}", anchor="e", fill="#a0afc1")
+
+    def x_at(timestamp):
+        return right - (now - timestamp) / HISTORY_SECONDS * (right - left)
+
+    # Mark each frequency change with a dashed line and a Hz label.
+    previous_freq = None
+    for timestamp, _, freq in data:
+        if freq != previous_freq and freq is not None:
+            x = x_at(timestamp)
+            canvas.create_line(x, top, x, bottom, fill="#7a8aa0", dash=(3, 3))
+            canvas.create_text(x + 3, top - 8, text=f"{freq:.2f} Hz", anchor="w", fill="#d0dbe8")
+        previous_freq = freq
+
+    for axis, color in enumerate(("#48c9ee", "#ffa35c")):
+        line = []
+        previous_time = None
+        for timestamp, error, _ in data:
+            if error is None or (previous_time is not None and timestamp - previous_time > 0.25):
+                if len(line) >= 4:
+                    canvas.create_line(*line, fill=color, width=2)
+                line = []
+            if error is not None:
+                line.extend((x_at(timestamp), top + (1 - error[axis] / limit) * (bottom - top) / 2))
+            previous_time = timestamp
+        if len(line) >= 4:
+            canvas.create_line(*line, fill=color, width=2)
 
 class App:
     """Manage GUI controls, calibration actions, and display updates."""
@@ -92,6 +139,7 @@ class App:
         self.connection = tk.StringVar(value="Preview" if args.preview else f"Connecting to {args.port}...")
         self.camera_error = None
         self.build_ui()
+        self.build_freq_window()
         try:
             self.config = read_config()
             self.load_calibration()
@@ -99,9 +147,14 @@ class App:
             self.config = {}
             self.notice(f"Calibration could not be loaded: {error}")
         self.hardware = Hardware(args.preview, args.port, args.serial_debug)
+        self.logger = RunLogger()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.bind("<Escape>", lambda event: self.cancel_action())
         self.root.bind("c", lambda event: self.center_target())
+        self.root.bind("<space>", lambda event: self.hardware.proceed.set())
+        self.root.bind("r", lambda event: self.redo_frequency())
+        self.fps_count = 0
+        self.fps_t = time.monotonic()
         self.tick()
 
     def build_ui(self):
@@ -165,6 +218,20 @@ class App:
             canvas.pack(fill="both", expand=True)
             self.graphs.append(canvas)
 
+    def build_freq_window(self):
+        """Create a separate window with a canvas for the frequency-run plot."""
+        self.freq_window = tk.Toplevel(self.root)
+        self.freq_window.title("Frequency Response Run")
+        self.freq_window.geometry("700x320")
+        self.freq_canvas = tk.Canvas(self.freq_window, bg="#182331", highlightthickness=0)
+        self.freq_canvas.pack(fill="both", expand=True)
+        self.freq_window.protocol("WM_DELETE_WINDOW", self.close_freq_window)
+
+    def close_freq_window(self):
+        """Close the frequency plot; the main interface keeps running."""
+        self.freq_canvas = None
+        self.freq_window.destroy()
+
     def control_row(self, parent, row, label, names, get_values, step, scale, low, high):
         """Build +/- controls and return a callback to refresh their values."""
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 5))
@@ -211,6 +278,8 @@ class App:
 
     def set_action(self, action, message):
         """Switch actions, clear the previous path, and update the controls."""
+        if self.action == Status.AUTOTUNE and action != Status.AUTOTUNE:
+            self.hardware.abort.set()   # leaving Autotune stops the sweep
         self.action = action
         self.polygon_points.clear()
         self.tracker.path = None
@@ -281,6 +350,39 @@ class App:
         if self.preview:
             message += " · preview"
         self.set_action(mode, message)
+
+    def autotune_mode(self, mode):
+        """Select the autotuning firmware mode and latch onto it."""
+        message = "Run the X and Y frequency sweeps, then hold level."
+        if self.preview:
+            message += " · preview"
+
+        # This mode latches on, i.e., does not require continuous packets
+        self.mode_request_id = (self.mode_request_id + 1) & 0xFFFFFFFF
+
+        print("Entered Autotune Mode")
+        self.set_action(mode, message)
+
+    def redo_frequency(self):
+        """Ask the firmware to step back and repeat the previous frequency."""
+        self.hardware.rerun.set()
+
+    def show_autotune_result(self):
+        """Process the logged sweep and report the Ziegler-Nichols gains."""
+        try:
+            gains = autotune_from_logs()
+        except Exception as error:
+            self.set_action(None, f"Sweep done, but processing failed: {error}")
+            return
+        parts = []
+        for axis, g in gains.items():
+            if g is None:
+                parts.append(f"{axis.upper()}: no result")
+            else:
+                parts.append(f"{axis.upper()}: Kp={g[0]:.2f} Ki={g[1]:.2f} Kd={g[2]:.2f}")
+        text = " | ".join(parts)
+        print("Autotune result ->", text, flush=True)
+        self.set_action(None, "Sweep complete. " + text)
 
     def start_path(self, shape):
         """Collect polygon vertices or start a circle from the current ball."""
@@ -362,8 +464,14 @@ class App:
         detector = self.tracker.detector
         if self.action == "ball" and self.candidate is not None:
             detector = self.candidate
+        self.tracker.history.freq = self.logger.run[1] if self.logger.run is not None else None
         if self.tracker.process_frame(now, frame, detector):
             self.set_action(None, "Trajectory complete.")
+        self.logger.on_ball(now, self.tracker.ball)
+        self.fps_count += 1
+        if now - self.fps_t >= 2:
+            print(f"{self.fps_count / (now - self.fps_t):.1f} frames/s processed", flush=True)
+            self.fps_count, self.fps_t = 0, now
 
     def show_frame(self):
         """Draw overlays and fit the camera image to the canvas."""
@@ -405,6 +513,19 @@ class App:
         """Consume camera updates, queue commands, and refresh the displays."""
         while True:
             try:
+                t, line = self.hardware.firmware.get_nowait()
+            except Empty:
+                break
+            self.logger.on_line(t, line)
+            if line == "SWEEP_DONE":
+                self.show_autotune_result()
+            if line == "SWEEP_ABORTED":
+                self.notice("Frequency sweep stopped.")
+            if line.startswith("Start Frequency Run"):
+                self.notice(f"{line} Space = go, R = repeat previous.")
+
+        while True:
+            try:
                 source, message = self.hardware.messages.get_nowait()
             except Empty:
                 break
@@ -431,6 +552,8 @@ class App:
         if now - self.last_graph >= 0.10:
             for i, canvas in enumerate(self.graphs):
                 draw_history(self.tracker.history, canvas, now, i)
+            if self.freq_canvas is not None:
+                draw_freq_history(self.tracker.history, self.freq_canvas, now)
             self.last_graph = now
         if self.camera_error is not None:
             self.notice(self.camera_error)
@@ -442,7 +565,7 @@ class App:
             self.root.after_cancel(self.job)
         self.hardware.stop.set()
         if self.hardware.serial_thread is not None:
-            self.hardware.serial_thread.join(timeout=0.25)
+            self.hardware.serial_thread.join(timeout=0.5)
         self.root.destroy()
 
 
@@ -454,8 +577,11 @@ def main():
     parser.add_argument("--serial-debug", action="store_true", help="Print Arduino serial output.")
     args = parser.parse_args()
     root = tk.Tk()
-    App(root, args)
-    root.mainloop()
+    app = App(root, args)
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        app.close()
 
 
 if __name__ == "__main__":

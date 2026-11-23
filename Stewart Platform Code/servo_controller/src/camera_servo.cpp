@@ -251,20 +251,51 @@ void setTilt(float thetax, float thetay, BallData* ball_data) { //Sets platform 
     float theta2 = (atan2(X2[2], d[1]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[1],2))/(2*L_11*D[1])))*180/PI;
     float theta3 = (atan2(X3[2], d[2]) - acos((pow(L_11,2) - pow(L_12,2) + pow(D[2],2))/(2*L_11*D[2])))*180/PI;
 
-    // debug
-    // Serial.print("theta1: ");
-    // Serial.println(theta1);
-    // Serial.print("theta2: ");
-    // Serial.println(theta2);
-    // Serial.print("theta3: ");
-    // Serial.println(theta3);
-
-    last_tilt_x = thetax;
-    last_tilt_y = thetay;
-    have_tilt = true;
-
-    setServoAngle('A', theta1, ball_data);
-    setServoAngle('B', theta2, ball_data);
-    setServoAngle('C', theta3, ball_data);
+    const uint8_t pins[3] = {data->servo_A_pin, data->servo_B_pin, data->servo_C_pin};
+    for (uint8_t axis = 0; axis < 3; ++axis) {
+        if (pins[axis] >= 16 || !isfinite(angles[axis])) {
+            return false;
+        }
+        const float degrees = horizontal[axis] - angles[axis] + trims[pins[axis]];
+        if (degrees < minimum[axis] || degrees > maximum[axis]) {
+            return false;
+        }
+    }
+    return true;
 }
 
+// Return true when the requested tilt had to be reduced.
+bool setTilt(float thetax, float thetay, BallData* ball_data) {
+    if (!isfinite(thetax) || !isfinite(thetay)) {
+        return true;
+    }
+
+    const float limit = PLANE_ANGLE_MAX;
+    const bool axis_limited = fabs(thetax) > limit || fabs(thetay) > limit;
+    thetax = constrain(thetax, -limit, limit);
+    thetay = constrain(thetay, -limit, limit);
+
+    float angles[3];
+    const bool limited = !solveTilt(thetax, thetay, angles, ball_data);
+    if (limited) {
+        if (!solveTilt(0, 0, angles, ball_data)) {
+            return true;
+        }
+        float low = 0.0f;
+        float high = 1.0f;
+        for (uint8_t i = 0; i < 5; ++i) {
+            const float mid = (low + high) * 0.5f;
+            float candidate[3];
+            if (solveTilt(mid * thetax, mid * thetay, candidate, ball_data)) {
+                low = mid;
+                memcpy(angles, candidate, sizeof(angles));
+            } else {
+                high = mid;
+            }
+        }
+    }
+
+    memcpy(last_angles, angles, sizeof(last_angles));
+    refreshServoTrim(ball_data);
+    return limited || axis_limited;
+}
