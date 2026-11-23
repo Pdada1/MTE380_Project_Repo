@@ -18,7 +18,7 @@ SYNC = bytes((0x0B, 0x00, 0x0B))
 PACKET = struct.Struct("<3sB3B4fI3f")
 ARDUINO_SERIAL_PORT = "COM6"
 BAUD_RATE = 115200
-DEFAULT_GAINS = (5.5, 1.8, 4.3)
+DEFAULT_GAINS = (7.0, 0.2, 4.8)
 TRAJECTORY_GAINS = (6.0, 1.8, 4.5)  # Kp, Ki, Kd for circle tracking
 
 TRAJECTORY_SPEED = 0.5
@@ -43,7 +43,6 @@ class Status(IntEnum):
     AUTOLEVEL = 4
     SWEEP = 5
     SERVO_TRIM = 6
-    CALIBRATE_SERVOS = 7
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,

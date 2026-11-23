@@ -1,43 +1,11 @@
 #include "controller.h"
 #include "LinearFit.h" //SimpleRegression library
 
-static float kp = KP;
-static float ki = KI;
-static float kd = KD;
+#define POS_SAMPLES 1
+#define VEL_SAMPLES 2
 
 float int_ex = 0;
 float int_ey = 0;
-static float saved_int_ex;
-static float saved_int_ey;
-
-void pid_set_gains(float next_kp, float next_ki, float next_kd) {
-    if (!isfinite(next_kp) || !isfinite(next_ki) || !isfinite(next_kd) ||
-        next_kp < 0 || next_ki < 0 || next_kd < 0) {
-        return;
-    }
-    if (next_ki != ki) {
-        int_ex = 0;
-        int_ey = 0;
-    }
-    kp = next_kp;
-    ki = next_ki;
-    kd = next_kd;
-}
-
-void pid_save_integral() {
-    saved_int_ex = int_ex;
-    saved_int_ey = int_ey;
-}
-
-void pid_restore_integral() {
-    int_ex = saved_int_ex;
-    int_ey = saved_int_ey;
-}
-
-void pid_reset() {
-    int_ex = 0;
-    int_ey = 0;
-}
 
 float e_av(BallData* ball_data, char axis) {
     float* x;
@@ -76,13 +44,14 @@ float de_av(BallData* ball_data, char axis) {
             return 0;
     }
     
-    //Generate error/time arrays
+    // Generate error/time arrays relative to the first velocity sample.
+    const uint32_t start_ms = ball_data->frame_ms[CAMERA_SAMPLES-VEL_SAMPLES];
     float ex[VEL_SAMPLES] = {0};
     float t[VEL_SAMPLES] = {0};
     for (int i=0; i<VEL_SAMPLES; i++) {
         ex[i] = x[CAMERA_SAMPLES-VEL_SAMPLES+i]; // originally subtracted xr here too, but that caused setpoint kick, so now its just x
-        // The serial timestamp is in milliseconds; the original fit used seconds.
-        t[i] = (ball_data->t[CAMERA_SAMPLES-VEL_SAMPLES+i] - ball_data->t[0]) * 0.001f;
+        const uint32_t elapsed_ms = ball_data->frame_ms[CAMERA_SAMPLES-VEL_SAMPLES+i] - start_ms;
+        t[i] = elapsed_ms / 1000.0f;
     }
 
     //Linear regression to find average velocity
@@ -96,7 +65,9 @@ float de_av(BallData* ball_data, char axis) {
 
 float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 'x' and then 'y') per new sample, otherwise integral will be inaccurate
     float e;
-    float dt = (ball_data->t[CAMERA_SAMPLES-1] - ball_data->t[CAMERA_SAMPLES-2]) * 0.001f;
+    // Subtract in unsigned milliseconds so elapsed time survives timestamp rollover.
+    const uint32_t elapsed_ms = ball_data->frame_ms[CAMERA_SAMPLES-1] - ball_data->frame_ms[CAMERA_SAMPLES-2];
+    const float dt = elapsed_ms / 1000.0f;
     switch (axis) {
         case 'x':
             e = ball_data->x[CAMERA_SAMPLES-1] - ball_data->xr[CAMERA_SAMPLES-1];
@@ -113,25 +84,19 @@ float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 
     }
 }
 
-float pid_get_tilt(BallData* ball_data, char axis, uint16_t fresh_samples) { //Gets tilt for axis 'x' or 'y'
-    // Use the latest error until enough fresh frames are available to average it.
-    const int latest = CAMERA_SAMPLES - 1;
-    const float latest_error = axis == 'x' ? ball_data->x[latest] - ball_data->xr[latest]
-                                          : ball_data->y[latest] - ball_data->yr[latest];
-    const float e = fresh_samples >= POS_SAMPLES ? e_av(ball_data, axis) : latest_error;
-    
-    // Keep the saved correction on the first frame and skip velocity across the gap.
-    const float int_e = fresh_samples >= 2 ? inte(ball_data, axis) : (axis == 'x' ? int_ex : int_ey);
-    const float d_e = fresh_samples >= VEL_SAMPLES ? de_av(ball_data, axis) : 0.0f;
+float pid_get_tilt(BallData* ball_data, char axis) { //Gets tilt for axis 'x' or 'y'
+    float e = e_av(ball_data, axis);
+    float int_e = inte(ball_data, axis);
+    float d_e = de_av(ball_data, axis);
 
-    float u = e*kp + int_e*ki + d_e*kd;
+    float u = e*ball_data->kp + int_e*ball_data->ki + d_e*ball_data->kd;
     return u;
 }
 
-float pid_get_xtilt(BallData* ball_data, uint16_t fresh_samples) {
-    return pid_get_tilt(ball_data, 'x', fresh_samples);
+float pid_get_xtilt(BallData* ball_data) {
+    return pid_get_tilt(ball_data, 'x');
 }
 
-float pid_get_ytilt(BallData* ball_data, uint16_t fresh_samples) {
-    return pid_get_tilt(ball_data, 'y', fresh_samples);
+float pid_get_ytilt(BallData* ball_data) {
+    return pid_get_tilt(ball_data, 'y');
 }

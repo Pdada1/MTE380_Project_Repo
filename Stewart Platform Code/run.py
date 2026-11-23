@@ -21,7 +21,6 @@ from track_ball import (
 ACTIONS = (
     ("Calibrate Ball", "Sample the ball color in the camera view.", "start_ball_calibration"),
     ("Calibrate Platform", "Find the red, green, and blue platform markers.", "start_platform_calibration"),
-    ("Calibrate Servos", "Hold neutral tilt while you trim each servo.", "start_mode", Status.CALIBRATE_SERVOS),
     ("Draw Circle", "Follow a circle starting at the ball.", "start_path", "circle"),
     ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),
     ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),

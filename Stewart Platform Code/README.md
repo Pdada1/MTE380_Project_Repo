@@ -18,7 +18,7 @@ Use the matching firmware from `servo_controller` to move the platform. Run `pyt
 
 - **Calibrate Ball**. Click several spots on the ball and select **Save Calibration**. **Reset Samples** clears the pending color samples.
 - **Calibrate Platform**. The camera detects the red, green and blue markers and fits a circle through them. Confirm the outline and select **Save Calibration**. The red marker defines +X with the default configuration. The two camera calibrations update `config.json` independently and take effect immediately.
-- **Calibrate Servos**. Hold neutral tilt and trim the three servos with the controls below the camera. Each click changes the offset by 1° within ±10°. Offsets are applied by physical PWM channel and reset when the interface starts.
+- **Servo trim controls**. Use the controls below the camera to adjust each servo by 1° per click, within ±10°. Offsets follow the physical PWM channels and reset when the interface starts.
 - **Draw Circle**. Move the target around a circle using the circle PID gains.
 - **Draw Polygon**. Click three or more points, then press **Go**. The ball visits them in order and returns to the first using the regular point PID gains. The vertices and edges stay visible until the run ends.
 - **Level Platform**. Hold neutral tilt with the current servo trims.
@@ -55,4 +55,3 @@ The interface uses a 39-byte packet at 115200 baud. Numeric values use little-en
 | 4 | Autolevel placeholder |
 | 5 | Sweep |
 | 6 | Update servo trims alongside the active action |
-| 7 | Calibrate servos at neutral tilt |
