@@ -40,6 +40,9 @@ class RunLogger:
         axis, freq, amp, _ = self.run
         self.folder.mkdir(exist_ok=True)
         path = self.folder / f"{axis}_{freq:.2f}Hz.csv"
+        if path.exists():
+            # Re-running a frequency replaces its log; keep the previous one just in case.
+            path.replace(path.with_name(path.name + ".bak"))
         with path.open("w", newline="") as f:
             f.write(f"# axis={axis} freq_hz={freq} amp_deg={amp}\n")
             writer = csv.writer(f)

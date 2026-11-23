@@ -164,6 +164,30 @@ uint8_t sweep_service(char axes, float* tx, float* ty, bool* updated) {
     return key;
 }
 
+// Run the frequency sweep on the requested axes ('x', 'y' or 'b' for both) and then hold
+// level. only_freq > 0 runs just that frequency instead of every frequency.
+static void run_frequency_sweeps(const CameraPacket& packet, BallData& ballData,
+                                 char axes, float only_freq) {
+    set_command_channels(packet, ballData);
+    set_motor_pins(ballData.servo_A_pin, ballData.servo_B_pin, ballData.servo_C_pin);
+    sweep_service_begin(packet);
+
+    // The PC prompts before each frequency: Space = go, R = repeat the previous one.
+    // PID keeps the ball centred on the axis that is not being swept.
+    const Mode previous_mode = current_mode;
+    current_mode = Mode::HUMAN_IN_LOOP;
+    sweep_aborted = false;
+    if (axes != 'y') {
+        run_sweep_X(only_freq);
+    }
+    if (!sweep_aborted && axes != 'x') {
+        run_sweep_Y(only_freq);
+    }
+    Serial.println(sweep_aborted ? "SWEEP_ABORTED" : "SWEEP_DONE");
+    current_mode = previous_mode;
+    hold_level(ballData);
+}
+
 void handle_camera_command(const CameraPacket& packet, BallData& ballData) {
     // Tracking and ball loss are handled by the camera path.
     switch (packet.status) {
@@ -178,23 +202,20 @@ void handle_camera_command(const CameraPacket& packet, BallData& ballData) {
         case PacketStatus::ServoTrim:
             apply_servo_trims(packet, ballData);
             break;
-        case PacketStatus::Autotune: {
-            set_command_channels(packet, ballData);
-            set_motor_pins(ballData.servo_A_pin, ballData.servo_B_pin, ballData.servo_C_pin);
-            sweep_service_begin(packet);
-
-            // The PC prompts before each frequency: Space = go, R = repeat the previous one.
-            // PID keeps the ball centred on the axis that is not being swept.
-            const Mode previous_mode = current_mode;
-            current_mode = Mode::HUMAN_IN_LOOP;
-            sweep_aborted = false;
-            run_sweep_X();
-            if (!sweep_aborted) {
-                run_sweep_Y();
+        case PacketStatus::Autotune:
+            run_frequency_sweeps(packet, ballData, 'b', 0.0f);
+            break;
+        case PacketStatus::FreqRun: {
+            // One frequency on one axis. The PC puts the axis in x (1 = X, 2 = Y)
+            // and the frequency in Hz in y.
+            const int axis_code = isfinite(packet.x) ? (int)(packet.x + 0.5f) : 0;
+            const float freq = isfinite(packet.y) ? packet.y : 0.0f;
+            if ((axis_code != 1 && axis_code != 2) || freq <= 0.0f) {
+                Serial.println("BAD_REQUEST");
+                Serial.println("SWEEP_ABORTED");
+                break;
             }
-            Serial.println(sweep_aborted ? "SWEEP_ABORTED" : "SWEEP_DONE");
-            current_mode = previous_mode;
-            hold_level(ballData);
+            run_frequency_sweeps(packet, ballData, axis_code == 1 ? 'x' : 'y', freq);
             break;
         }
         case PacketStatus::Autolevel:

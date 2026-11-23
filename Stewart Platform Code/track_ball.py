@@ -45,11 +45,15 @@ class Status(IntEnum):
     SERVO_TRIM = 6
     CALIBRATE_SERVOS = 7
     SWEEP_DATA = 8
+    FREQ_RUN = 9   # one frequency on one axis: ball x = axis code, ball y = frequency in Hz
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
 # they act like a latch. All other modes spam packets with their Status type
-HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE, Status.AUTOLEVEL)
+HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE, Status.AUTOLEVEL, Status.FREQ_RUN)
+# Modes where the firmware runs the frequency sweep and needs the ball stream to hold the other axis.
+SWEEP_MODES = (Status.AUTOTUNE, Status.FREQ_RUN)
+SWEEP_AXIS_CODE = {"x": 1.0, "y": 2.0}  # FREQ_RUN axis codes
 
 
 def put_latest(queue, item):
@@ -308,7 +312,7 @@ class Tracker:
         self.history.add(now, ball, self.platform.normalize(self.target))
         return complete
 
-    def send_command(self, hardware, now, action, gains, trims, mode_request_id):
+    def send_command(self, hardware, now, action, gains, trims, mode_request_id, freq_run=(0.0, 0.0)):
         """Queue servo trims, the active command, and a shutdown level packet."""
         pins = self.platform.pins if self.platform is not None else SERVO_PINS
         manual_gains = gains
@@ -325,6 +329,8 @@ class Tracker:
               and now - self.frame_time <= 0.25):
             status = Status.TRACKING
             ball = self.platform.normalize(self.detection[0])
+        if status == Status.FREQ_RUN:
+            ball = freq_run  # (axis code, Hz) rides in the ball fields, which are unused in this mode
         trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims, 0.0, 0, *DEFAULT_GAINS)
         # Each button press gets its own ID, even if it selects the same mode again.
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
@@ -336,7 +342,7 @@ class Tracker:
         level = PACKET.pack(SYNC, Status.LEVEL, *pins, 0, 0, 0, 0, frame_ms, *gains)
         # During the autotune sweep the firmware keeps the ball in place from this stream.
         stream = None
-        if (status == Status.AUTOTUNE and self.platform is not None and self.detection is not None
+        if (status in SWEEP_MODES and self.platform is not None and self.detection is not None
                 and now - self.frame_time <= 0.25):
             stream = PACKET.pack(SYNC, Status.SWEEP_DATA, *pins,
                                  *self.platform.normalize(self.detection[0]), *target, frame_ms, *gains)

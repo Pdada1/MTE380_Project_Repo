@@ -10,11 +10,13 @@ Reset the platform to level and wait for the computer to tell it to continue?
 #include "controller.h"
 
 #define MIN_TSTEP 0.05f
-#define MAX_ANGLE_DEVIATION 10.0f
+#define MAX_ANGLE_DEVIATION 5.0f
 #define MAX_FREQ 1.5f       // Hz
 #define MIN_FREQ 0.5f       // Hz
+#define MIN_SINGLE_FREQ 0.1f // Hz, limits for a single requested run (keep in sync with run.py)
+#define MAX_SINGLE_FREQ 2.0f // Hz
 #define FREQ_INCREMENT 0.1f // Hz
-#define NUM_OSCILLATIONS 10
+#define NUM_OSCILLATIONS 5
 
 #define SERVO_0_CH 8
 #define SERVO_1_CH 10
@@ -61,20 +63,28 @@ uint8_t wait_for_pc(float* tx, float* ty)
     }
 }
 
-void run_sweep_X()
+void run_sweep_X(float only_freq)
 {
-    run_sweep('x');
+    run_sweep('x', only_freq);
 }
 
-void run_sweep_Y()
+void run_sweep_Y(float only_freq)
 {
-   run_sweep('y');
+   run_sweep('y', only_freq);
 }
 
-// Runs the full frequency sweep on one axis ('x' or 'y').
-void run_sweep(char axis)
+// Runs the frequency sweep on one axis ('x' or 'y'). If only_freq > 0, only that
+// frequency is run (once) instead of the full MIN_FREQ..MAX_FREQ sweep.
+void run_sweep(char axis, float only_freq)
 {
-    const int num_freqs = (int)((MAX_FREQ - MIN_FREQ) / FREQ_INCREMENT + 0.5f) + 1;
+    const bool single = only_freq > 0.0f;
+    if (single && (only_freq < MIN_SINGLE_FREQ || only_freq > MAX_SINGLE_FREQ))
+    {
+        Serial.println("BAD_FREQUENCY");
+        sweep_aborted = true;
+        return;
+    }
+    const int num_freqs = single ? 1 : (int)((MAX_FREQ - MIN_FREQ) / FREQ_INCREMENT + 0.5f) + 1;
     const char hold_axis = (axis == 'x') ? 'y' : 'x'; // PID keeps the ball on this axis
     float tx = 0, ty = 0;                             // latest PID tilts
     bool updated = false;
@@ -82,7 +92,7 @@ void run_sweep(char axis)
     int n = 0;
     while (n < num_freqs)
     {
-        float freq = MIN_FREQ + n * FREQ_INCREMENT;
+        float freq = single ? only_freq : MIN_FREQ + n * FREQ_INCREMENT;
 
         switch (current_mode)
         {

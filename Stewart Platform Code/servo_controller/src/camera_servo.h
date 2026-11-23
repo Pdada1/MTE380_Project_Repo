@@ -44,7 +44,8 @@ enum class PacketStatus : uint8_t {
     Autolevel = 4,
     Sweep = 5,
     ServoTrim = 6,
-    SweepData = 8, // ball/target stream the PC sends while an autotune sweep runs
+    SweepData = 9, //ball/target stream the PC sends while an autotune sweep runs
+    FreqRun = 10,   // one frequency on one axis: x = axis (1 = X, 2 = Y), y = frequency in Hz
 };
  
 // Payload of Python's <3sB3B4fI3f packet, after the three sync bytes.

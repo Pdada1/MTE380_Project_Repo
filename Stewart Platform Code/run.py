@@ -14,7 +14,8 @@ import cv2
 from calibrate import calibration_objects, find_platform, read_config, sample_ball_color, save_config
 from helper import Platform, draw_ball
 from track_ball import (
-    ARDUINO_SERIAL_PORT, DEFAULT_GAINS, HISTORY_SECONDS, HOLD_LEVEL_MODES, TRIM_LIMIT, TRIM_PINS,
+    ARDUINO_SERIAL_PORT, DEFAULT_GAINS, HISTORY_SECONDS, HOLD_LEVEL_MODES, SWEEP_AXIS_CODE, SWEEP_MODES,
+    TRIM_LIMIT, TRIM_PINS,
     Hardware, Status, Tracker, make_trajectory,
 )
 
@@ -33,6 +34,7 @@ ACTIONS = (
     ("Quit", "Close the interface.", "close"),
 )
 MODE_LABELS = {args[0]: label for label, _, method, *args in ACTIONS if method == "start_mode"}
+RUN_FREQ_RANGE = (0.1, 2.0)  # Hz; keep in sync with MIN/MAX_SINGLE_FREQ in freq_response_servo.cpp
 
 
 def draw_history(history, canvas, now, index):
@@ -135,6 +137,9 @@ class App:
         self.last_graph = 0
         self.last_sent = 0
         self.mode_request_id = 0
+        self.freq_run_request = (0.0, 0.0)  # (axis code, Hz) sent with the Frequency Run command
+        self.run_axis = tk.StringVar(value="x")
+        self.run_freq = tk.StringVar(value="1.00")
         self.message = tk.StringVar(value="Starting camera...")
         self.connection = tk.StringVar(value="Preview" if args.preview else f"Connecting to {args.port}...")
         self.camera_error = None
@@ -204,6 +209,16 @@ class App:
         )
         self.control_row(controls, 1, "Servo trim", tuple(f"Pin {p}" for p in TRIM_PINS),
                          lambda: self.trims, 1, 1, -TRIM_LIMIT, TRIM_LIMIT)
+
+        run = ttk.LabelFrame(middle, text="Single frequency run", padding=8)
+        run.grid(row=4, column=0, sticky="ew", pady=(5, 0))
+        ttk.Label(run, text="Axis").pack(side="left")
+        for text, value in (("X", "x"), ("Y", "y")):
+            ttk.Radiobutton(run, text=text, value=value, variable=self.run_axis).pack(side="left", padx=3)
+        ttk.Label(run, text="Hz").pack(side="left", padx=(10, 2))
+        ttk.Spinbox(run, from_=RUN_FREQ_RANGE[0], to=RUN_FREQ_RANGE[1], increment=0.05,
+                    format="%.2f", width=6, textvariable=self.run_freq).pack(side="left")
+        ttk.Button(run, text="Run", command=self.start_freq_run).pack(side="left", padx=(10, 0))
 
         graphs = ttk.LabelFrame(self.root, text="Ball History · 30 seconds", padding=8)
         graphs.grid(row=0, column=2, sticky="nsew", padx=(5, 10), pady=10)
@@ -278,8 +293,8 @@ class App:
 
     def set_action(self, action, message):
         """Switch actions, clear the previous path, and update the controls."""
-        if self.action == Status.AUTOTUNE and action != Status.AUTOTUNE:
-            self.hardware.abort.set()   # leaving Autotune stops the sweep
+        if self.action in SWEEP_MODES and action != self.action:
+            self.hardware.abort.set()   # leaving Autotune or a frequency run stops the sweep
         self.action = action
         self.polygon_points.clear()
         self.tracker.path = None
@@ -362,6 +377,29 @@ class App:
 
         print("Entered Autotune Mode")
         self.set_action(mode, message)
+
+    def start_freq_run(self):
+        """Run the selected frequency on the selected axis once, then hold level."""
+        if self.action in SWEEP_MODES:
+            self.notice("A run is already in progress. Cancel it first.")
+            return
+        try:
+            freq = round(float(self.run_freq.get()), 2)
+        except ValueError:
+            self.notice("Enter the frequency in Hz.")
+            return
+        low, high = RUN_FREQ_RANGE
+        if not low <= freq <= high:
+            self.notice(f"Choose a frequency between {low:g} and {high:g} Hz.")
+            return
+        axis = self.run_axis.get()
+        self.freq_run_request = (SWEEP_AXIS_CODE[axis], freq)
+        # This mode latches on: each press gets its own ID and sends one command packet.
+        self.mode_request_id = (self.mode_request_id + 1) & 0xFFFFFFFF
+        message = f"Single run: {axis.upper()} at {freq:.2f} Hz."
+        if self.preview:
+            message += " · preview"
+        self.set_action(Status.FREQ_RUN, message)
 
     def redo_frequency(self):
         """Ask the firmware to step back and repeat the previous frequency."""
@@ -518,9 +556,15 @@ class App:
                 break
             self.logger.on_line(t, line)
             if line == "SWEEP_DONE":
-                self.show_autotune_result()
+                if self.action == Status.FREQ_RUN:
+                    self.set_action(None, "Run complete. Saved to freq_logs.")
+                else:
+                    self.show_autotune_result()
             if line == "SWEEP_ABORTED":
-                self.notice("Frequency sweep stopped.")
+                if self.action in SWEEP_MODES:
+                    self.set_action(None, "Frequency sweep stopped.")
+                else:
+                    self.notice("Frequency sweep stopped.")
             if line.startswith("Start Frequency Run"):
                 self.notice(f"{line} Space = go, R = repeat previous.")
 
@@ -547,7 +591,8 @@ class App:
         now = time.monotonic()
         if sample is not None or now - self.last_sent >= 0.08:
             if not self.preview:
-                self.tracker.send_command(self.hardware, now, self.action, self.gains, self.trims, self.mode_request_id)
+                self.tracker.send_command(self.hardware, now, self.action, self.gains, self.trims,
+                                          self.mode_request_id, self.freq_run_request)
             self.last_sent = now
         if now - self.last_graph >= 0.10:
             for i, canvas in enumerate(self.graphs):

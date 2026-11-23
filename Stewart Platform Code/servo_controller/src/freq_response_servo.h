@@ -15,9 +15,10 @@ enum class Mode {
 };
 extern Mode current_mode; 
  
-void run_sweep(char axis);
-void run_sweep_X();
-void run_sweep_Y();
+// only_freq > 0 runs that single frequency (Hz) once; 0 runs the full sweep.
+void run_sweep(char axis, float only_freq = 0.0f);
+void run_sweep_X(float only_freq = 0.0f);
+void run_sweep_Y(float only_freq = 0.0f);
 void run_sweep_axis(char axis);
 void set_motor_pins(uint8_t servo_A_pin, uint8_t servo_B_pin, uint8_t servo_C_pin);
  
