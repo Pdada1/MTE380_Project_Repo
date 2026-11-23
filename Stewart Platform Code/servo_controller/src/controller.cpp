@@ -101,18 +101,24 @@ float de_av(BallData* ball_data, char axis) {
 }
 
 float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 'x' and then 'y') per new sample, otherwise integral will be inaccurate
+    float limit_i; //@MM
+    
     float e;
     float dt = (ball_data->t[CAMERA_SAMPLES-1] - ball_data->t[CAMERA_SAMPLES-2]) * 0.001f;
     switch (axis) {
         case 'x':
             e = ball_data->x[CAMERA_SAMPLES-1] - ball_data->xr[CAMERA_SAMPLES-1];
             int_ex += e*dt;
-            int_ex = constrain(int_ex, -I_LIMIT, I_LIMIT);
+            limit_i = (ki > 1e-6f) ? I_LIMIT / ki : 0; //@MM
+
+            int_ex = constrain(int_ex, -limit_i, limit_i);
             return int_ex;
         case 'y':
             e = ball_data->y[CAMERA_SAMPLES-1] - ball_data->yr[CAMERA_SAMPLES-1];
             int_ey += e*dt;
-            int_ey = constrain(int_ey, -I_LIMIT, I_LIMIT);
+            limit_i = (ki > 1e-6f) ? I_LIMIT / ki : 0; //@MM
+
+            int_ey = constrain(int_ey, -limit_i, limit_i);
             return int_ey;
         default:
             return 0;

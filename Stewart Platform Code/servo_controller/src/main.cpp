@@ -10,8 +10,9 @@ uint16_t num_samples = 0;
 
 // @MM
 bool use_autotune_pid = false;
-float e_prev = 0, t_0 = 0;
-#define T_RISE_DESIRED 1
+float e_prev = 0; 
+long t_0 = 0;
+#define T_RISE_DESIRED 2000
 
 #define SYNC_BYTES 3
 #define PACKET_SIZE_BYTES 39
@@ -172,7 +173,7 @@ static void update_tracking(const CameraPacket& packet) {
         if (gap == 0) {
             return;
         }
-        if (gap > 250) {
+        if (gap > 50) { //@MM 250 gap seems too long? 
             // Reset PID state after a long gap, while retaining the valid sample history.
             pid_reset();
         }
@@ -213,12 +214,15 @@ static void update_tracking(const CameraPacket& packet) {
             float e = sqrt(pow(e_av(&ballData, 'x'), 2) + pow(e_av(&ballData, 'y'), 2));
             float de = e_prev - e;
 
-            if (de > 0) { // ball passes set point, thus rise time has been found 
+            if (de > -0.3) { // ball passes set point, thus rise time has been found 
                 use_autotune_pid = false;
-                float t_r = ballData.t[0] - t_0;
-                float kp_scale = t_r/T_RISE_DESIRED;
-                Serial.print("time: ");
-                Serial.print(ballData.t[0]);
+                long now = millis();
+                long t_r = abs(now - t_0);
+                float kp_scale = (t_r*1.0)/(1.0*T_RISE_DESIRED);
+                Serial.print("Current time: ");
+                Serial.print(now);
+                Serial.print("\tt_0: ");
+                Serial.print(t_0);
                 Serial.print("\tt_r: ");
                 Serial.print(t_r);
                 Serial.print("\tt_desired: ");
@@ -235,27 +239,29 @@ static void update_tracking(const CameraPacket& packet) {
             pid_set_gains(packet.gains[0], packet.gains[1], packet.gains[2]);
             // Save the integral so we can undo this step if the tilt hits a limit.
             pid_save_integral();
-            float thetax = pid_get_xtilt(&ballData, use_autotune_pid);
-            float thetay = pid_get_ytilt(&ballData, use_autotune_pid);
-            const bool limited = setTilt(thetax, thetay, &ballData);
-            if (limited) {
-                pid_restore_integral();
-            }
-
-            static uint32_t last_log_ms = 0;
-            const uint32_t now = millis();
-            if (now - last_log_ms >= 250 && Serial.availableForWrite() >= 56) {
-                last_log_ms = now;
-                // Serial.print(F("dt_ms="));
-                // Serial.print(ballData.t[CAMERA_SAMPLES - 1] - ballData.t[CAMERA_SAMPLES - 2]);
-                // Serial.print(F(" tilt="));
-                // Serial.print(thetax, 2);
-                // Serial.print('/');
-                // Serial.print(thetay, 2);
-                // Serial.print(F(" limited="));
-                // Serial.println(limited);
-            }
         }
+        
+        float thetax = pid_get_xtilt(&ballData, use_autotune_pid);
+        float thetay = pid_get_ytilt(&ballData, use_autotune_pid);
+        const bool limited = setTilt(thetax, thetay, &ballData);
+        if (limited) {
+            pid_restore_integral();
+        }
+
+        static uint32_t last_log_ms = 0;
+        const uint32_t now = millis();
+        if (now - last_log_ms >= 250 && Serial.availableForWrite() >= 56) {
+            last_log_ms = now;
+            // Serial.print(F("dt_ms="));
+            // Serial.print(ballData.t[CAMERA_SAMPLES - 1] - ballData.t[CAMERA_SAMPLES - 2]);
+            // Serial.print(F(" tilt="));
+            // Serial.print(thetax, 2);
+            // Serial.print('/');
+            // Serial.print(thetay, 2);
+            // Serial.print(F(" limited="));
+            // Serial.println(limited);
+        }
+    
     }
 }
 
@@ -265,8 +271,6 @@ void loop() {
     static Status active = BALL_LOST;
     static uint32_t sweep_start = 0;
     static uint32_t sweep_id = 0;
-
-
 
 
     CameraPacket packet;
@@ -314,16 +318,7 @@ void loop() {
                 new_tracking = true;
                 break;
 
-            case SWEEP:
-                // The PC uses frame_ms as a sweep ID. Repeated IDs keep the current sweep going.
-                if (active != SWEEP || packet.frame_ms != sweep_id) {
-                    sweep_id = packet.frame_ms;
-                    mode_changed = true;
-                    restart_sweep = true;
-                }
-                // Fall through to update the servo mapping.
             case AUTOTUNE_MM:
-
                 // Ignore invalid coordinates and keep any valid measurement already received.
                 if (!isfinite(packet.x) || !isfinite(packet.y) ||
                     !isfinite(packet.xr) || !isfinite(packet.yr)) {
@@ -332,26 +327,16 @@ void loop() {
 
                 latest_tracking = packet;
                 new_tracking = true;
-
-
-                static float xr_prev = 0, yr_prev = 0;
-
-                // detect if set point has changed
-                // if so, change PID parameters, and save when it changed
-                // @TODO check if ball has settled prior.
-                // @TODO generate xr, yr randomly 
-                // thus if you change setpoint while ball hasnt settled, youll have to choose one again 
-                if (xr_prev != latest_tracking.xr || yr_prev != latest_tracking.yr) {
-                    use_autotune_pid = true;
-                    t_0 = millis() / 1000.0f;
-                    e_prev = 0;
-                
-                    xr_prev = latest_tracking.xr;
-                    yr_prev = latest_tracking.yr;
-                }
-
                 break;
 
+            case SWEEP:
+                // The PC uses frame_ms as a sweep ID. Repeated IDs keep the current sweep going.
+                if (active != SWEEP || packet.frame_ms != sweep_id) {
+                    sweep_id = packet.frame_ms;
+                    mode_changed = true;
+                    restart_sweep = true;
+                }
+                // Fall through to update the servo mapping.
             case BALL_LOST:
             case LEVEL:
             case AUTOTUNE:
@@ -373,13 +358,14 @@ void loop() {
         if (active != next) {
             // Packet type changed, must adjust action
             mode_changed = true;
-            bool tracking_or_lost = (active == TRACKING || active == BALL_LOST) && (next == TRACKING || next == BALL_LOST); // @MM ????????????????
+            bool tracking_or_lost = (active == TRACKING || active == BALL_LOST || active == AUTOTUNE_MM) && (next == TRACKING || next == BALL_LOST || next == AUTOTUNE_MM); 
             if (!tracking_or_lost) {
                 // Keep the history when the ball disappears or returns. Start fresh
                 // when switching to or from another operating mode.
+                pid_reset();
                 num_samples = 0;
             }
-            pid_reset();
+            //pid_reset(); @MM // pid would be reset if ball was lost for even one frame??
             active = next;
         }
     }
@@ -414,6 +400,36 @@ void loop() {
             // Run frequency response for motor autotuning
             // latest_packet = curr_packet;
             // level_platform = false;
+
+
+
+            // HMMMMM as soon as AUTOTUNE PID button is pressed, this condition is triggered, messing up the time differential 
+            // Should we move this to TRACKING case? 
+            // 
+
+
+            static float xr_prev = 0, yr_prev = 0;
+
+            // detect if set point has changed
+            // if so, change PID parameters, and save when it changed
+            // @TODO check if ball has settled prior.
+            // @TODO generate xr, yr randomly 
+            // thus if you change setpoint while ball hasnt settled, youll have to choose one again 
+            if (xr_prev != latest_tracking.xr || yr_prev != latest_tracking.yr) {
+                use_autotune_pid = true;
+                t_0 = millis();
+                e_prev = 0;
+                
+
+                Serial.print("Set point changed to (");
+                Serial.print(latest_tracking.xr);
+                Serial.print(", ");
+                Serial.print(latest_tracking.yr);
+                Serial.println(")");
+            }
+
+            xr_prev = latest_tracking.xr;
+            yr_prev = latest_tracking.yr;
 
 
             if (trim_changed) {

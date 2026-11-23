@@ -170,5 +170,5 @@ bool setTilt(float thetax, float thetay, BallData* ball_data) {
 
     memcpy(last_angles, angles, sizeof(last_angles));
     refreshServoTrim(ball_data);
-    return limited || axis_limited;
+    return (limited || axis_limited);
 }

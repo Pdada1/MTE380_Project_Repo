@@ -44,11 +44,12 @@ class Status(IntEnum):
     SWEEP = 5
     SERVO_TRIM = 6
     CALIBRATE_SERVOS = 7
+    AUTOTUNE_MM = 8  
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
 # they act like a latch. All other modes spam packets with their Status type
-HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE, Status.AUTOLEVEL)
+HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE, Status.AUTOLEVEL, Status.AUTOTUNE_MM)
 
 
 def put_latest(queue, item):
