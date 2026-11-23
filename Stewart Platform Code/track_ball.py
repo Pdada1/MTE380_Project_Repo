@@ -18,13 +18,13 @@ SYNC = bytes((0x0B, 0x00, 0x0B))
 PACKET = struct.Struct("<3sB3B4fI3f")
 ARDUINO_SERIAL_PORT = "COM6"
 BAUD_RATE = 115200
-DEFAULT_GAINS = (7.0, 0.2, 4.8)
+DEFAULT_GAINS = (6.0, 0.1, 4.8)
 TRAJECTORY_GAINS = (6.0, 1.8, 4.5)  # Kp, Ki, Kd for circle tracking
 
 TRAJECTORY_SPEED = 0.5
 TRACKING_SLOW_ERROR = 0.05
 TRACKING_PAUSE_ERROR = 0.30
-MIN_SPEED_FACTOR = 1.0
+MIN_SPEED_FACTOR = 0.5
 CIRCLE_POINTS = 108              # More points make the displayed circle smoother
 WAYPOINT_TOLERANCE = 0.10      # Arrival distance as a fraction of platform radius
 PLATFORM_MARGIN = 0.10         # Keep trajectories away from the platform edge
@@ -43,6 +43,7 @@ class Status(IntEnum):
     AUTOLEVEL = 4
     SWEEP = 5
     SERVO_TRIM = 6
+    AUTOROTATION = 7
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
@@ -284,20 +285,20 @@ class Tracker:
         ball = (0.0, 0.0)
         target = self.platform.normalize(self.target) if self.platform is not None else (0.0, 0.0)
         status = Status.BALL_LOST
-        if isinstance(action, Status):
+        if isinstance(action, Status) and action != Status.AUTOROTATION:
             status = action
         elif action in ("ball", "platform"):
             status = Status.LEVEL
         elif (self.platform is not None and self.detection is not None
               and now - self.frame_time <= 0.25):
-            status = Status.TRACKING
+            status = Status.AUTOROTATION if action == Status.AUTOROTATION else Status.TRACKING
             ball = self.platform.normalize(self.detection[0])
         trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims, 0.0, 0, *DEFAULT_GAINS)
         # Each button press gets its own ID, even if it selects the same mode again.
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
         timestamp = mode_request_id if status == Status.SWEEP else frame_ms
         tracking_gains = gains
-        if status == Status.TRACKING:
+        if status in (Status.TRACKING, Status.AUTOROTATION):
             tracking_gains = tuple(value / 10 for value in self.active_gains(manual_gains))
         command = PACKET.pack(SYNC, status, *pins, *ball, *target, timestamp, *tracking_gains)
         level = PACKET.pack(SYNC, Status.LEVEL, *pins, 0, 0, 0, 0, frame_ms, *gains)

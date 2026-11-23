@@ -25,6 +25,7 @@ ACTIONS = (
     ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),
     ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
     ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "start_mode", Status.AUTOTUNE),
+    ("Autorotation Mode", "Track the ball independent of the platform orientation.", "start_mode", Status.AUTOROTATION),
     ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
     ("Sweep Platform", "Sweep X and Y once, then hold level.", "start_mode", Status.SWEEP),
     ("Quit", "Close the interface.", "close"),

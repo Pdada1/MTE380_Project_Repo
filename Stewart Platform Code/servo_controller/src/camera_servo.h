@@ -15,13 +15,13 @@
 // Servo C: index 1
 #define SERVO_A_MAX 124.0 // Link touches ground
 #define SERVO_A_MIN 65.0 //Links are straight
-#define SERVO_A_HORIZ 83.0 // Horizontal position (linkage parallel to gnd)
+#define SERVO_A_HORIZ 84.0 // Horizontal position (linkage parallel to gnd)
 #define SERVO_B_MAX 113.0
 #define SERVO_B_MIN 65.0
 #define SERVO_B_HORIZ 85.0
 #define SERVO_C_MAX 106.0
 #define SERVO_C_MIN 47.0
-#define SERVO_C_HORIZ 71.0
+#define SERVO_C_HORIZ 70.0
 
 // stewart platform dimensions 
 #define S 140 // distance from center of platform to pivot point
@@ -44,6 +44,7 @@ enum class PacketStatus : uint8_t {
     Autolevel = 4,
     Sweep = 5,
     ServoTrim = 6,
+    Autorotation = 7,
 };
 
 // Payload of Python's <3sB3B4fI3f packet, after the three sync bytes.
