@@ -44,8 +44,8 @@ class Status(IntEnum):
     SWEEP = 5
     SERVO_TRIM = 6
     CALIBRATE_SERVOS = 7
-    SWEEP_DATA = 8
-    FREQ_RUN = 9   # one frequency on one axis: ball x = axis code, ball y = frequency in Hz
+    SWEEP_DATA = 9
+    FREQ_RUN = 10   # one frequency on one axis: ball x = axis code, ball y = frequency in Hz
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
