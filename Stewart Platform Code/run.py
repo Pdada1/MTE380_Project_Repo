@@ -210,7 +210,7 @@ class App:
         self.control_row(controls, 1, "Servo trim", tuple(f"Pin {p}" for p in TRIM_PINS),
                          lambda: self.trims, 1, 1, -TRIM_LIMIT, TRIM_LIMIT)
 
-        run = ttk.LabelFrame(middle, text="Single frequency run", padding=8)
+        run = ttk.LabelFrame(middle, text="Frequency response", padding=8)
         run.grid(row=4, column=0, sticky="ew", pady=(5, 0))
         ttk.Label(run, text="Axis").pack(side="left")
         for text, value in (("X", "x"), ("Y", "y")):
@@ -219,6 +219,7 @@ class App:
         ttk.Spinbox(run, from_=RUN_FREQ_RANGE[0], to=RUN_FREQ_RANGE[1], increment=0.05,
                     format="%.2f", width=6, textvariable=self.run_freq).pack(side="left")
         ttk.Button(run, text="Run", command=self.start_freq_run).pack(side="left", padx=(10, 0))
+        ttk.Button(run, text="Compute PID From Logs", command=self.compute_from_logs).pack(side="right")
 
         graphs = ttk.LabelFrame(self.root, text="Ball History · 30 seconds", padding=8)
         graphs.grid(row=0, column=2, sticky="nsew", padx=(5, 10), pady=10)
@@ -405,22 +406,36 @@ class App:
         """Ask the firmware to step back and repeat the previous frequency."""
         self.hardware.rerun.set()
 
-    def show_autotune_result(self):
-        """Process the logged sweep and report the Ziegler-Nichols gains."""
-        try:
-            gains = autotune_from_logs()
-        except Exception as error:
-            self.set_action(None, f"Sweep done, but processing failed: {error}")
-            return
+    def autotune_summary(self):
+        """Process the logs in freq_logs and return the Ziegler-Nichols gains as text."""
+        gains = autotune_from_logs()
         parts = []
         for axis, g in gains.items():
             if g is None:
                 parts.append(f"{axis.upper()}: no result")
             else:
                 parts.append(f"{axis.upper()}: Kp={g[0]:.2f} Ki={g[1]:.2f} Kd={g[2]:.2f}")
-        text = " | ".join(parts)
+        return " | ".join(parts)
+
+    def show_autotune_result(self):
+        """Process the logged sweep and report the Ziegler-Nichols gains."""
+        try:
+            text = self.autotune_summary()
+        except Exception as error:
+            self.set_action(None, f"Sweep done, but processing failed: {error}")
+            return
         print("Autotune result ->", text, flush=True)
         self.set_action(None, "Sweep complete. " + text)
+
+    def compute_from_logs(self):
+        """Compute the gains from the saved logs, without running a sweep."""
+        try:
+            text = self.autotune_summary()
+        except Exception as error:
+            self.notice(f"Could not process the logs: {error}")
+            return
+        print("Autotune result (saved logs) ->", text, flush=True)
+        self.notice("From saved logs. " + text)
 
     def start_path(self, shape):
         """Collect polygon vertices or start a circle from the current ball."""

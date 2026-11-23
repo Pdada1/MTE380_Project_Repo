@@ -6,14 +6,14 @@
   },
   "ball_detection": {
     "lower_hsv": [
-      2,
-      145,
-      90
+      8,
+      198,
+      140
     ],
     "upper_hsv": [
-      23,
+      22,
       255,
-      235
+      215
     ],
     "min_radius_px": 5
   },

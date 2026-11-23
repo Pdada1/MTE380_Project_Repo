@@ -9,8 +9,8 @@ import cv2
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 CAMERA_INDEX = 1
-FRAME_WIDTH = 1280
-FRAME_HEIGHT = 720
+FRAME_WIDTH = 640
+FRAME_HEIGHT = 480
 SERVO_PINS = (0, 2, 1) # corresponds to servo indices 0, 2, and 1
 
 
