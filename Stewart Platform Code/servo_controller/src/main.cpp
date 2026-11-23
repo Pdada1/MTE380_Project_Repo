@@ -106,10 +106,10 @@ void loop() {
 
             float accx = acc_av(&ballData, 'x');
             float accy = acc_av(&ballData, 'y');
-            float acc_norm = sqrt(accx*accx + accy*accy);
-            Serial.print(accx/acc_norm, 3);
+            //float acc_norm = sqrt(accx*accx + accy*accy);
+            Serial.print(accx * (S/(float)1000), 6); // m/s^2
             Serial.print(' ');
-            Serial.print(accy/acc_norm, 3);
+            Serial.print(accy * (S/(float)1000), 6);
             Serial.print(' ');
             //Shifted thetax and thetay
             Serial.print(-sin(rotationData.thetax_shifted*PI/180), 3);
