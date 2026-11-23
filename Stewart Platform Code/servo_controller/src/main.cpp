@@ -72,23 +72,32 @@ void loop() {
 
 #else
     if (camera_data_ready()) {
+        static float last_t = 0;
         camera_read_data(&ballData);
+        float now = ballData.t[CAMERA_SAMPLES-1];
+        if (now - last_t > 0.3f) {            // dropout: buffers hold stale data
+            num_samples = 1;                  // wait for CAMERA_SAMPLES fresh samples
+            rotationData.num_valid = 0;
+        }
+        last_t = now;
         num_samples++;
 
         //Only run controller after ballData buffers have filled
         if (num_samples >= CAMERA_SAMPLES) {
-            float thetax = pid_get_xtilt(&ballData);   // call each PID function once only
-            float thetay = pid_get_ytilt(&ballData);
-            thetax = constrain(thetax, -PLANE_ANGLE_MAX, PLANE_ANGLE_MAX);  // Store what the platform actually did
+            float thetax = pid_get_xtilt(&ballData, rotationData.theta0);
+            float thetay = pid_get_ytilt(&ballData, rotationData.theta0);
+            thetax = constrain(thetax, -PLANE_ANGLE_MAX, PLANE_ANGLE_MAX);
             thetay = constrain(thetay, -PLANE_ANGLE_MAX, PLANE_ANGLE_MAX);
             setTilt(thetax, thetay, &ballData);
-
+            
             read_rotation_data(&rotationData, &ballData, thetax, thetay);
+            unsigned long t0 = micros();
             fit_rotation_data(&rotationData);
+            unsigned long fit_us = micros() - t0;
 
-            //t, x, y, ax, ay, sin(thetax), sin(thetay)
-            Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);
-            Serial.print(' ');
+            // // t, x, y, ax, ay, sin(thetax), sin(thetay)
+            // Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);
+            // Serial.print(' ');
             // Serial.print(ballData.x[CAMERA_SAMPLES-1], 3);
             // Serial.print(' ');
             // Serial.print(ballData.y[CAMERA_SAMPLES-1], 3);
@@ -106,19 +115,34 @@ void loop() {
             // Serial.print(-sin(thetay*PI/180), 3);
             // Serial.println(' ');
 
-            float accx = acc_av(&ballData, 'x');
-            float accy = acc_av(&ballData, 'y');
-            //float acc_norm = sqrt(accx*accx + accy*accy);
-            Serial.print(accx * (S/(float)1000), 6); // m/s^2
-            Serial.print(' ');
-            Serial.print(accy * (S/(float)1000), 6);
-            Serial.print(' ');
-            //Shifted thetax and thetay
-            Serial.print(-sin(rotationData.thetax_shifted*PI/180), 3);
-            Serial.print(' ');
-            Serial.print(-sin(rotationData.thetay_shifted*PI/180), 3);
-            Serial.println(' ');
-            
+            // float accx = acc_av(&ballData, 'x');
+            // float accy = acc_av(&ballData, 'y');
+            // //float acc_norm = sqrt(accx*accx + accy*accy);
+            // Serial.print(accx * (S/(float)1000), 6); // m/s^2
+            // Serial.print(' ');
+            // Serial.print(accy * (S/(float)1000), 6);
+            // Serial.print(' ');
+            // //Shifted thetax and thetay
+            // Serial.print(-sin(rotationData.thetax_shifted*PI/180), 3);
+            // Serial.print(' ');
+            // Serial.print(-sin(rotationData.thetay_shifted*PI/180), 3);
+            // Serial.println(' ');
+
+            Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);              Serial.print(' ');
+            Serial.print(ballData.x[CAMERA_SAMPLES-1], 3);              Serial.print(' ');
+            Serial.print(ballData.y[CAMERA_SAMPLES-1], 3);              Serial.print(' ');
+            Serial.print(thetax, 2);                                    Serial.print(' ');
+            Serial.print(thetay, 2);                                    Serial.print(' ');
+            Serial.print(acc_av(&ballData, 'x') * (S/(float)1000), 4);  Serial.print(' ');
+            Serial.print(acc_av(&ballData, 'y') * (S/(float)1000), 4);  Serial.print(' ');
+            Serial.print(rotationData.thetax_shifted, 2);               Serial.print(' ');
+            Serial.print(rotationData.thetay_shifted, 2);               Serial.print(' ');
+            Serial.print((int)rotationData.fit_status);                 Serial.print(' ');
+            Serial.print(rotationData.rms_deg, 2);                      Serial.print(' ');
+            Serial.print(rotationData.msx, 4);                          Serial.print(' ');
+            Serial.print(rotationData.msy, 4);                          Serial.print(' ');
+            Serial.print(rotationData.theta0, 2);                       Serial.print(' ');
+            Serial.println(fit_us);
         }
     }
 #endif
