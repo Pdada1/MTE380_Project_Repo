@@ -9,24 +9,24 @@ from tkinter import ttk
 
 import cv2
 
-from calibrate import calibration_objects, find_platform, read_config, sample_ball_color, save_config
+from calibrate import calibration_objects, find_platform, identify_marker, read_config, sample_ball_color, save_config
 from helper import Platform, draw_ball
 from track_ball import (
-    ARDUINO_SERIAL_PORT, DEFAULT_GAINS, HISTORY_SECONDS, HOLD_LEVEL_MODES, TRIM_LIMIT, TRIM_PINS,
+    ARDUINO_SERIAL_PORT, DEFAULT_GAINS, HISTORY_SECONDS, HOLD_LEVEL_MODES, TRIM_LIMIT,
     Hardware, Status, Tracker, make_trajectory,
 )
 
 
 # Label, help text, callback, optional callback arguments.
 ACTIONS = (
-    ("Calibrate Ball", "Sample the ball color in the camera view.", "start_ball_calibration"),
     ("Calibrate Platform", "Find the red, green, and blue platform markers.", "start_platform_calibration"),
-    ("Draw Circle", "Follow a circle starting at the ball.", "start_path", "circle"),
-    ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),
-    ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
+    ("Calibrate Ball", "Sample the ball color in the camera view.", "start_ball_calibration"),
     ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "start_mode", Status.AUTOTUNE),
     ("Autorotation Mode", "Track the ball independent of the platform orientation.", "start_mode", Status.AUTOROTATION),
     ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
+    ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
+    ("Draw Circle", "Follow a circle starting at the ball.", "start_path", "circle"),
+    ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),
     ("Sweep Platform", "Sweep X and Y once, then hold level.", "start_mode", Status.SWEEP),
     ("Quit", "Close the interface.", "close"),
 )
@@ -89,6 +89,14 @@ class App:
         self.last_graph = 0
         self.last_sent = 0
         self.mode_request_id = 0
+        self.serial_ready = False
+        self.identify_started = 0
+        self.identify_baseline = None
+        self.scan_baseline = None
+        self.scan_channel = 0
+        self.identify_confirmed = False
+        self.identify_preview = None
+        self.identified_pins = {}
         self.message = tk.StringVar(value="Starting camera...")
         self.connection = tk.StringVar(value="Preview" if args.preview else f"Connecting to {args.port}...")
         self.camera_error = None
@@ -140,6 +148,10 @@ class App:
         self.action_controls = ttk.Frame(middle)
         self.action_controls.grid(row=2, column=0, sticky="ew", pady=(0, 5))
         self.save_button = ttk.Button(self.action_controls, text="Save Calibration", command=self.save_calibration)
+        self.confirm_circle_button = ttk.Button(self.action_controls, text="Confirm Circle",
+                                                command=self.confirm_platform_circle)
+        self.redetect_circle_button = ttk.Button(self.action_controls, text="Re-detect Circle",
+                                                 command=self.redetect_platform_circle)
         self.reset_button = ttk.Button(self.action_controls, text="Reset Samples", command=self.reset_candidate)
         self.go_button = ttk.Button(self.action_controls, text="Go", command=self.start_polygon)
         self.cancel_button = ttk.Button(self.action_controls, text="Cancel Action", command=self.cancel_action)
@@ -150,7 +162,7 @@ class App:
             controls, 0, "PID gains", ("Kp", "Ki", "Kd"),
             lambda: self.tracker.active_gains(self.gains), 1, 10, 0, None,
         )
-        self.control_row(controls, 1, "Servo trim", tuple(f"Pin {p}" for p in TRIM_PINS),
+        self.control_row(controls, 1, "Servo trim", ("R", "G", "B"),
                          lambda: self.trims, 1, 1, -TRIM_LIMIT, TRIM_LIMIT)
 
         graphs = ttk.LabelFrame(self.root, text="Ball History · 30 seconds", padding=8)
@@ -217,9 +229,10 @@ class App:
         self.tracker.path = None
         self.refresh_pid_controls()
         self.candidate = None
-        for button in (self.save_button, self.reset_button, self.go_button, self.cancel_button):
+        for button in (self.save_button, self.confirm_circle_button, self.redetect_circle_button,
+                       self.reset_button, self.go_button, self.cancel_button):
             button.pack_forget()
-        if action in ("ball", "platform"):
+        if action == "ball":
             self.save_button.state(["disabled"])
             self.save_button.pack(side="left", padx=(0, 4))
         if action == "ball":
@@ -233,7 +246,10 @@ class App:
 
     def cancel_action(self):
         """End the current action and return to manual targeting."""
-        self.set_action(None, "Click the camera view to set a target.")
+        if self.action == "platform":
+            self.finish_identification("Platform calibration canceled.")
+        else:
+            self.set_action(None, "Click the camera view to set a target.")
 
     def center_target(self):
         """Set the target to the platform center and cancel any path."""
@@ -247,7 +263,96 @@ class App:
 
     def start_platform_calibration(self):
         """Start detecting RGB markers for platform calibration."""
+        if not self.serial_ready:
+            self.notice("Connect the Arduino before calibrating the platform.")
+            return
+        self.mode_request_id = (self.mode_request_id + 1) & 0xFFFFFFFF
+        self.identify_started = time.monotonic()
+        self.identify_baseline = None
+        self.scan_baseline = None
+        self.scan_channel = 0
+        self.identify_confirmed = False
+        self.identify_preview = None
+        self.identified_pins.clear()
         self.set_action("platform", "Looking for the red, green, and blue platform markers.")
+
+    def finish_identification(self, message):
+        self.mode_request_id = (self.mode_request_id + 1) & 0xFFFFFFFF
+        self.set_action(Status.LEVEL, message)
+
+    def identify_pin(self):
+        if self.action == "platform" and self.identify_confirmed:
+            if len(self.identified_pins) < 3 and self.scan_channel < 16:
+                # Channel 16 tells firmware to put every channel at the lower bound.
+                return 16 if self.scan_baseline is None else self.scan_channel
+        return None
+
+    def mapped_servo_pins(self):
+        if self.action == "platform" and len(self.identified_pins) == 3:
+            return tuple(self.identified_pins[i] for i in range(3))
+        return None
+
+    def redetect_platform_circle(self):
+        if self.action != "platform" or self.identify_confirmed:
+            return
+        self.start_platform_calibration()
+
+    def confirm_platform_circle(self):
+        if self.action != "platform" or self.identify_baseline is None or self.identify_confirmed:
+            return
+        self.identify_confirmed = True
+        self.identify_started = time.monotonic()
+        self.confirm_circle_button.pack_forget()
+        self.redetect_circle_button.pack_forget()
+        self.notice("Measuring the scan baseline...")
+
+    def update_platform_calibration(self, now, frame):
+        if self.candidate is not None or (self.identify_baseline is not None and not self.identify_confirmed):
+            return
+        elapsed = now - self.identify_started
+        if elapsed < 0.75:
+            return
+
+        geometry = find_platform(frame)
+        if geometry is None:
+            if elapsed >= 5:
+                self.finish_identification("RGB markers could not be detected. Calibration not saved.")
+            return
+
+        pins = self.mapped_servo_pins()
+        if pins is not None:
+            self.candidate = (*geometry, pins)
+            self.identify_preview = geometry
+            self.save_button.state(["!disabled"])
+            self.save_button.pack(side="left", padx=(0, 4), before=self.cancel_button)
+            self.notice("Review the pin mapping, then select Save Calibration or Cancel.")
+            return
+
+        if self.identify_baseline is None:
+            self.identify_baseline = geometry
+            self.confirm_circle_button.pack(side="left", padx=(0, 4), before=self.cancel_button)
+            self.redetect_circle_button.pack(side="left", padx=(0, 4), before=self.cancel_button)
+            self.notice("Confirm the circle or re-detect it.")
+            return
+
+        self.identify_preview = geometry
+        self.identify_started = time.monotonic()
+        if self.scan_baseline is None:
+            self.scan_baseline = geometry
+        else:
+            marker = identify_marker(self.scan_baseline, geometry)
+            if marker is not None and marker not in self.identified_pins:
+                self.identified_pins[marker] = self.scan_channel
+            self.scan_channel += 1
+
+        next_pin = self.identify_pin()
+        if self.mapped_servo_pins() is not None:
+            self.mode_request_id = (self.mode_request_id + 1) & 0xFFFFFFFF
+            self.notice("Servo pins identified. Returning to neutral.")
+        elif next_pin is None:
+            self.finish_identification("Could not identify all three servo channels. Calibration not saved.")
+        else:
+            self.notice(f"Identifying servo pin {next_pin}...")
 
     def reset_candidate(self):
         """Discard the unsaved calibration and disable saving."""
@@ -354,11 +459,8 @@ class App:
 
     def process_frame(self, now, frame):
         """Update calibration previews and pass the frame to the tracker."""
-        if self.action == "platform" and self.candidate is None:
-            self.candidate = find_platform(frame)
-            if self.candidate is not None:
-                self.save_button.state(["!disabled"])
-                self.notice("Markers found. Check the outline, then save.")
+        if self.action == "platform":
+            self.update_platform_calibration(now, frame)
 
         detector = self.tracker.detector
         if self.action == "ball" and self.candidate is not None:
@@ -370,12 +472,27 @@ class App:
         """Draw overlays and fit the camera image to the canvas."""
         frame = self.tracker.frame.copy()
         platform = self.tracker.platform
-        if self.action == "platform" and self.candidate is not None:
-            platform = Platform(*self.candidate)
+        marker_colors = ((0, 0, 255), (0, 255, 0), (255, 0, 0))
+        if self.action == "platform" and self.identify_baseline is not None:
+            platform = Platform(*self.identify_baseline)
         if platform is not None:
             platform.draw(frame)
-            for point, color in zip(platform.servo_points, ((0, 0, 255), (0, 255, 0), (255, 0, 0))):
+            for point, color in zip(platform.servo_points, marker_colors):
                 cv2.circle(frame, tuple(point), 4, color, -1)
+        if self.action == "platform" and self.identify_baseline is not None:
+            cv2.drawMarker(frame, tuple(map(round, self.identify_baseline[0])),
+                           (255, 255, 0), cv2.MARKER_CROSS, 16, 2)
+            if self.identify_preview is not None:
+                cv2.drawMarker(frame, tuple(map(round, self.identify_preview[0])),
+                               (255, 0, 255), cv2.MARKER_TILTED_CROSS, 16, 2)
+            if self.candidate is not None:
+                _, _, marker_points, pins = self.candidate
+                for color, (x, y), pin in zip(marker_colors, marker_points, pins):
+                    label = str(pin)
+                    cv2.putText(frame, label, (x + 9, y - 7),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 4, cv2.LINE_AA)
+                    cv2.putText(frame, label, (x + 9, y - 7),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
         points = self.tracker.path.points if self.tracker.path is not None else self.polygon_points
         if self.tracker.path is None and len(points) >= 3:
             points = [*points, points[0]]
@@ -413,6 +530,7 @@ class App:
                 self.camera_error = message
             else:
                 self.connection.set(message)
+                self.serial_ready = message.endswith(" connected")
         try:
             sample = self.hardware.frames.get_nowait()
         except Empty:
@@ -427,13 +545,19 @@ class App:
         now = time.monotonic()
         if sample is not None or now - self.last_sent >= 0.08:
             if not self.preview:
-                self.tracker.send_command(self.hardware, now, self.action, self.gains, self.trims, self.mode_request_id)
+                action = self.action
+                if action == "platform" and not self.identify_confirmed:
+                    action = Status.BALL_LOST
+                self.tracker.send_command(self.hardware, now, action, self.gains, self.trims, self.mode_request_id,
+                                          self.identify_pin(), self.mapped_servo_pins())
             self.last_sent = now
         if now - self.last_graph >= 0.10:
             for i, canvas in enumerate(self.graphs):
                 draw_history(self.tracker.history, canvas, now, i)
             self.last_graph = now
         if self.camera_error is not None:
+            if self.action == "platform":
+                self.finish_identification("Camera stopped. Platform calibration not saved.")
             self.notice(self.camera_error)
         self.job = self.root.after(15, self.tick)
 

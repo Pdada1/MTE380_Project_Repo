@@ -30,7 +30,6 @@ WAYPOINT_TOLERANCE = 0.10      # Arrival distance as a fraction of platform radi
 PLATFORM_MARGIN = 0.10         # Keep trajectories away from the platform edge
 
 HISTORY_SECONDS = 30
-TRIM_PINS = SERVO_PINS
 TRIM_LIMIT = 10
 
 
@@ -44,6 +43,7 @@ class Status(IntEnum):
     SWEEP = 5
     SERVO_TRIM = 6
     AUTOROTATION = 7
+    IDENTIFY_SERVOS = 11
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
@@ -276,7 +276,7 @@ class Tracker:
         self.history.add(now, ball, self.platform.normalize(self.target))
         return complete
 
-    def send_command(self, hardware, now, action, gains, trims, mode_request_id):
+    def send_command(self, hardware, now, action, gains, trims, mode_request_id, identify_pin=None, mapped_pins=None):
         """Queue servo trims, the active command, and a shutdown level packet."""
         pins = self.platform.pins if self.platform is not None else SERVO_PINS
         manual_gains = gains
@@ -287,13 +287,19 @@ class Tracker:
         status = Status.BALL_LOST
         if isinstance(action, Status) and action != Status.AUTOROTATION:
             status = action
+        elif action == "platform" and identify_pin is not None:
+            status = Status.IDENTIFY_SERVOS
+            pins = (identify_pin, 0, 0)
         elif action in ("ball", "platform"):
             status = Status.LEVEL
+            if mapped_pins is not None:
+                pins = mapped_pins
         elif (self.platform is not None and self.detection is not None
               and now - self.frame_time <= 0.25):
             status = Status.AUTOROTATION if action == Status.AUTOROTATION else Status.TRACKING
             ball = self.platform.normalize(self.detection[0])
-        trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims, 0.0, 0, *DEFAULT_GAINS)
+        level_pins = mapped_pins or (self.platform.pins if self.platform is not None else SERVO_PINS)
+        trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *level_pins, *trims, 0.0, 0, *DEFAULT_GAINS)
         # Each button press gets its own ID, even if it selects the same mode again.
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
         timestamp = mode_request_id if status == Status.SWEEP else frame_ms
@@ -301,5 +307,5 @@ class Tracker:
         if status in (Status.TRACKING, Status.AUTOROTATION):
             tracking_gains = tuple(value / 10 for value in self.active_gains(manual_gains))
         command = PACKET.pack(SYNC, status, *pins, *ball, *target, timestamp, *tracking_gains)
-        level = PACKET.pack(SYNC, Status.LEVEL, *pins, 0, 0, 0, 0, frame_ms, *gains)
+        level = PACKET.pack(SYNC, Status.LEVEL, *level_pins, 0, 0, 0, 0, frame_ms, *gains)
         put_latest(hardware.commands, (trim, command, level, mode_request))

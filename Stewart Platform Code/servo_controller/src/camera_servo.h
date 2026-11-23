@@ -45,6 +45,7 @@ enum class PacketStatus : uint8_t {
     Sweep = 5,
     ServoTrim = 6,
     Autorotation = 7,
+    IdentifyServos = 11,
 };
 
 // Payload of Python's <3sB3B4fI3f packet, after the three sync bytes.
@@ -74,21 +75,12 @@ struct BallData { //Struct to keep track of all relevant ball data
 
 bool camera_data_ready();
 bool camera_take_command(CameraPacket& packet);
-
 void camera_read_data(BallData* ball_data);
 
 void servoInit();
-
-/*!
- *  @brief  Sets the servo angle for a given servo 
- *  @param  servo Servo number 'A'/'B'/'C'
- *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
- *  @param  ball_data ballData struct
- */
+void identify_servo_pins(const CameraPacket& packet);
 void setServoAngle(char servo, float angle_rel_horiz, BallData* ball_data);
-
 void apply_servo_trims(const CameraPacket& packet, BallData& ballData);
-
 void setTilt(float thetax, float thetay, BallData* ball_data);
 
 #endif

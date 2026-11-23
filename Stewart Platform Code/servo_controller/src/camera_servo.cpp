@@ -124,6 +124,30 @@ void servoInit() {
 
 /*!
  *  @brief  Sets the servo angle for a given servo 
+ *  @param  channel Servo pin
+ *  @param  angle Angle of the servo in degrees
+ */
+static void write_servo_angle(uint8_t channel, float angle) {
+    const float period_us = 1000000 / (float)SERVO_FREQ;
+    const float duty = (angle / SERVO_RANGE) * (SERVO_MAX_DUTY - SERVO_MIN_DUTY) + SERVO_MIN_DUTY;
+    if (channel < 16) {
+        servo_drive.writeMicroseconds(channel, duty * period_us);
+    }
+}
+
+void identify_servo_pins(const CameraPacket& packet) {
+    // Use the travel range shared by all three servo calibrations.
+    const float low = max(SERVO_A_MIN, max(SERVO_B_MIN, SERVO_C_MIN));
+    const float high = min(SERVO_A_MAX, min(SERVO_B_MAX, SERVO_C_MAX));
+    // A selector of 16 puts all channels low for the camera baseline.
+    const uint8_t selected = packet.servo_pins[0];
+    for (uint8_t channel = 0; channel < 16; ++channel) {
+        write_servo_angle(channel, channel == selected ? high : low);
+    }
+}
+
+/*!
+ *  @brief  Sets the servo angle for a given servo, relative to horizontal
  *  @param  servo Servo number 'A'/'B'/'C'
  *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
  *  @param  ball_data ballData struct
@@ -152,10 +176,7 @@ void setServoAngle(char servo, float angle_rel_horiz, BallData* ball_data)
             return;
     }
 
-    float period_us = 1000000/(float)SERVO_FREQ;
-    float duty = (angle_servo/(float)SERVO_RANGE)*(SERVO_MAX_DUTY-SERVO_MIN_DUTY) + SERVO_MIN_DUTY;
-    float pulse_us = duty*period_us;
-    servo_drive.writeMicroseconds(servo_num, pulse_us);
+    write_servo_angle(servo_num, angle_servo);
 }
 
 void setTilt(float thetax, float thetay, BallData* ball_data) { //Sets platform angle relative to neutral position

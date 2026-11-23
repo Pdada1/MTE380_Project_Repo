@@ -55,6 +55,9 @@ void handle_camera_command(const CameraPacket& packet, BallData& ballData) {
             set_command_channels(packet, ballData);
             run_sweep(ballData);
             break;
+        case PacketStatus::IdentifyServos:
+            identify_servo_pins(packet);
+            break;
         case PacketStatus::ServoTrim:
             apply_servo_trims(packet, ballData);
             break;

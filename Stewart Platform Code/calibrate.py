@@ -109,6 +109,17 @@ def find_platform(frame):
     return origin, radius, points
 
 
+def identify_marker(baseline, tilted):
+    """Identify which RGB marker the center moved away from."""
+    (x, y), radius, points = baseline
+    dx, dy = tilted[0][0] - x, tilted[0][1] - y
+    scores = [((x - px) * dx + (y - py) * dy) / radius for px, py in points]
+    best, second, _ = sorted(range(3), key=scores.__getitem__, reverse=True)
+    if scores[best] >= 3 and scores[best] - scores[second] >= 2:
+        return best
+    return None
+
+
 def read_config():
     """Load the saved calibration or return an empty configuration."""
     return json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
@@ -142,13 +153,12 @@ def save_config(config, frame, action, candidate):
             "min_radius_px": detector.min_radius,
         }
     elif action == "platform":
-        origin, radius, points = candidate
-        old_servos = {servo["index"]: servo["pin"] for servo in config.get("servos", []) if "pin" in servo}
+        origin, radius, points, pins = candidate
         config["calibration"] = {
             "origin_px": origin, "platform_radius_px": radius,
             "zero_degree_servo": config.get("calibration", {}).get("zero_degree_servo", 0),
         }
-        config["servos"] = [{"index": i, "point_px": point, "pin": old_servos.get(i, SERVO_PINS[i])}
+        config["servos"] = [{"index": i, "point_px": point, "pin": pins[i]}
                             for i, point in enumerate(points)]
 
     temp = CONFIG_PATH.with_suffix(".tmp")
