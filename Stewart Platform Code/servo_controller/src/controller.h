@@ -3,9 +3,9 @@
 
 #include "camera_servo.h"
 
-#define KP 4.5
-#define KI 0.5
-#define KD 3.7
+#define KP 5.5
+#define KI 1.8
+#define KD 4.3
 #define I_LIMIT 0.8
 
 void pid_set_gains(float kp, float ki, float kd);
