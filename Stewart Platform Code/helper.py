@@ -9,8 +9,8 @@ import cv2
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 CAMERA_INDEX = 1
-FRAME_WIDTH = 640
-FRAME_HEIGHT = 480
+FRAME_WIDTH = 1280
+FRAME_HEIGHT = 720
 SERVO_PINS = (0, 2, 1) # corresponds to servo indices 0, 2, and 1
 
 
@@ -21,8 +21,11 @@ def open_camera():
     if not camera.isOpened():
         camera.release()
         raise RuntimeError(f"Unable to open camera {CAMERA_INDEX}")
+    # MJPG first: uncompressed 720p is limited to a low frame rate on many webcams.
+    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+    camera.set(cv2.CAP_PROP_FPS, 30)
     return camera
 
 
