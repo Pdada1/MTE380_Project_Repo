@@ -305,12 +305,12 @@ void fit_rotation_data(RotationData* rotation_data) {
                         off += K[p][q] * K[p][q];
                     }
                 }
-                if (off < 1e-30) {
+                if (off < 1e-12) {
                     break;
                 }
                 for (int p = 0; p < 3; p++) {
                     for (int q = p + 1; q < 4; q++) {
-                        if (fabs(K[p][q]) < 1e-300) {
+                        if (fabs(K[p][q]) < 1e-12) {
                             continue;
                         }
                         double th = (K[q][q] - K[p][p]) / (2.0 * K[p][q]);
