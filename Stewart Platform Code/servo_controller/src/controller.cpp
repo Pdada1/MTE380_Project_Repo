@@ -329,39 +329,42 @@ void read_rotation_data(RotationData* rotation_data, BallData* ball_data, float 
 }
 
 void fit_rotation_data(RotationData* rotation_data) {
-    //Look at the state of the newest FIT_SAMPLES samples
-    bool no_history = false, off_platform = false, acc_high = false;
+    bool off_platform = false, acc_high = false;
+    int n_used = 0;
     for (int i = 0; i < FIT_SAMPLES; i++) {
         switch (rotation_data->sample_state[i]) {
-            case SAMPLE_NO_HISTORY:     no_history   = true; break;
-            case SAMPLE_OFF_PLATFORM:   off_platform = true; break;
-            case SAMPLE_ACC_TOO_HIGH:   acc_high     = true; break;
+            case SAMPLE_GOOD:         n_used++;            break;
+            case SAMPLE_OFF_PLATFORM: off_platform = true; break;
+            case SAMPLE_ACC_TOO_HIGH: acc_high     = true; break;
             default: break;
         }
     }
-    if (no_history) {   //Need a full window of samples, each with enough tilt history to look back CONTROLLER_DELAY
-        //Serial.println(F("Not enough samples to fit rotation data!"));
+
+    if (n_used < 2) {
+        rotation_data->cand_rms_deg = 0;
+        rotation_data->cand_msx = 0;
+        rotation_data->cand_msy = 0;
+        rotation_data->cand_theta0 = 0;
         rotation_data->fit_status = FIT_NOT_ENOUGH_SAMPLES;
         return;
     }
+
+    FitStatus status = FIT_OK;
     if (off_platform) {
-        rotation_data->fit_status = FIT_OFF_PLATFORM;
-        return; //Keep old msx, msy, theta0
-    }
-    if (acc_high) {
-        rotation_data->fit_status = FIT_ACC_TOO_HIGH;
-        return; //Keep old msx, msy, theta0
+        status = FIT_OFF_PLATFORM;
+    } else if (acc_high) {
+        status = FIT_ACC_TOO_HIGH;
     }
 
     fit_real msx, msy, theta0;
     {
         /* ---------- 1. attitude profile matrix B = sum( np * nps^T ) over the cached vectors ---------- */
         fit_real B[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-        int n_used = 0;
+        n_used = 0;
 
         for (int i = 0; i < FIT_SAMPLES; i++) {
             if (rotation_data->sample_state[i] != SAMPLE_GOOD) {
-                continue;                       /* az or np undefined: skip sample */
+                continue;                       /* not ready / rejected: skip sample */
             }
             const fit_real* np_v = rotation_data->np_v[i];
             const fit_real* nps  = rotation_data->nps_v[i];
@@ -374,7 +377,11 @@ void fit_rotation_data(RotationData* rotation_data) {
         }
 
         if (n_used < 2) {
-            rotation_data->fit_status = FIT_DEGENERATE;
+            rotation_data->cand_rms_deg = 0;
+            rotation_data->cand_msx = 0;
+            rotation_data->cand_msy = 0;
+            rotation_data->cand_theta0 = 0;
+            rotation_data->fit_status = (status == FIT_OK) ? FIT_DEGENERATE : status;
             return;                             /* not enough usable samples: keep old estimate */
         }
 
@@ -471,7 +478,11 @@ void fit_rotation_data(RotationData* rotation_data) {
 
         /* ---------- 5. back-calculate msx, msy, theta0 ---------- */
         if (!(R22 > (fit_real)1e-9)) {              /* ns_z must be > 0 for ns = (-msx, -msy, 1)/norm */
-            rotation_data->fit_status = FIT_DEGENERATE;
+            rotation_data->cand_rms_deg = 0;
+            rotation_data->cand_msx = 0;
+            rotation_data->cand_msy = 0;
+            rotation_data->cand_theta0 = 0;
+            rotation_data->fit_status = (status == FIT_OK) ? FIT_DEGENERATE : status;
             return;
         }
 
@@ -505,21 +516,29 @@ void fit_rotation_data(RotationData* rotation_data) {
         fit_real rms_deg = sqrt(mse) * RAD_TO_DEG_F;
         rotation_data->rms_deg = rms_deg;
 
+        //Always save candidate fit results even if status is bad
+        rotation_data->cand_rms_deg = (float)rms_deg;
+        rotation_data->cand_msx = (float)msx;
+        rotation_data->cand_msy = (float)msy;
+        rotation_data->cand_theta0 = (float)theta0;
+
         //DISCARD CHECK 3: fit too poor (also rejects NaN)
-        if (!(rms_deg <= RMS_LIMIT_DEG)) {
-            rotation_data->fit_status = FIT_RMS_TOO_HIGH;
-            return; //Keep old msx, msy, theta0
+        if (status == FIT_OK && !(rms_deg <= RMS_LIMIT_DEG)) {
+            status = FIT_RMS_TOO_HIGH;
         }
     }
 
     if (!(fabs(msx) < 1e9 && fabs(msy) < 1e9 && fabs(theta0) <= 360)) { //Also rejects NaN/inf
-        rotation_data->fit_status = FIT_DEGENERATE;
+        rotation_data->fit_status = (status == FIT_OK) ? FIT_DEGENERATE : status;
         return;
     }
 
-    //Fit accepted
-    rotation_data->msx = msx;
-    rotation_data->msy = msy;
-    rotation_data->theta0 = theta0;
-    rotation_data->fit_status = FIT_OK;
+    rotation_data->fit_status = status;
+
+    if (status == FIT_OK) {
+        rotation_data->rms_deg = (float)rotation_data->cand_rms_deg;
+        rotation_data->msx = (float)msx;
+        rotation_data->msy = (float)msy;
+        rotation_data->theta0 = (float)theta0;
+    }
 }

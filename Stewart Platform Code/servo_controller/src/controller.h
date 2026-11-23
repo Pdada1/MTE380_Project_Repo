@@ -8,15 +8,15 @@
 #define KD 3
 #define I_LIMIT 1.0
 
-#define CONTROLLER_DELAY_MAX 2.0
+#define CONTROLLER_DELAY_MAX 1.0
 #define CONTROLLER_DELAY 0.55
-#define SAMPLE_RATE_APPROX 0.05
-#define FIT_SAMPLES 10
+#define SAMPLE_RATE_APPROX 0.045
+#define FIT_SAMPLES 20
 
 //Limits for rejecting rotation-fit data. Rejected data -> keep the old msx, msy, theta0.
 #define PLATFORM_RADIUS_LIMIT 1.0 //Reject if |(x,y)| > this (x,y are in units of S, so 1 = platform edge)
 #define ACC_LIMIT_K 1.5           //K in: reject if |(ax,ay)| > K*5.89*sqrt(sx^2+sy^2)/(1+sx^2+sy^2), sx=sin(thetax), sy=sin(thetay)
-#define RMS_LIMIT_DEG 3.0         //Reject if RMS angle between np_calculated and np_measured is above this [deg]
+#define RMS_LIMIT_DEG 2.0         //Reject if RMS angle between np_calculated and np_measured is above this [deg]
 
 enum FitStatus : uint8_t { //Result of the most recent fit_rotation_data() call
     FIT_OK = 0,                //Fit accepted, msx/msy/theta0 updated
@@ -53,6 +53,12 @@ struct RotationData { //Struct to keep track of all relevant rotation data
     fit_real nps_v[FIT_SAMPLES][3] = {{0}}; //unit normal from the delay-compensated commanded tilt
     uint8_t sample_state[FIT_SAMPLES] = {0}; //SampleState of each slot
     int ring_head = 0; //Next slot to overwrite
+
+    // Candidate (unfiltered/unrejected) values from the latest fit attempt
+    float cand_rms_deg = 0;
+    float cand_msx = 0;
+    float cand_msy = 0;
+    float cand_theta0 = 0;  
 
     float msx = 0;
     float msy = 0;

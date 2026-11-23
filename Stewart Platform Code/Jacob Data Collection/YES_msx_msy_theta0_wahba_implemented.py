@@ -15,36 +15,22 @@ from matplotlib.backends.backend_tkagg import (
 
 TIGHT_DOTTED = (0, (1.5, 1.5))
 
-# Column numbers, starting at zero:
-# 0  t
-# 1  x
-# 2  y
-# 3  -sin(thetax)
-# 4  -sin(thetay)
-# 5  acc_x
-# 6  acc_y
-# 7  -sin(thetax_shifted)
-# 8  -sin(thetay_shifted)
-# 9  status
-# 10 RMS_deg
-# 11 msx
-# 12 msy
-# 13 theta0
-# 14 fit_us
-
+# Supported input formats:
+# Compact (5 columns): t, RMS_deg, msx, msy, theta0 (no status)
+# Compact (6 columns): t, fit_status, RMS_deg, msx, msy, theta0
+# Original format (14+ columns): status, RMS_deg, msx, msy, theta0
+# are columns 9, 10, 11, 12, and 13.
 
 def parse_data(text):
-    """Parse pasted whitespace-, comma-, or semicolon-separated data."""
+    """Parse compact or original whitespace/comma/semicolon-separated logs."""
     rows = []
 
     for line_no, line in enumerate(text.splitlines(), 1):
         line = line.strip()
-
         if not line or line.startswith("#"):
             continue
 
         parts = line.replace(",", " ").replace(";", " ").split()
-
         try:
             row = [float(v) for v in parts]
         except ValueError:
@@ -53,43 +39,45 @@ def parse_data(text):
                 "Remove column headers and paste numeric data only."
             )
 
-        if len(row) < 15:
+        if len(row) == 5:
+            # t, RMS_deg, msx, msy, theta0; no status available.
+            t, rms, msx, msy, theta0 = row
+            status = np.nan
+        elif len(row) == 6:
+            # t, fit_status, RMS_deg, msx, msy, theta0
+            t, status, rms, msx, msy, theta0 = row
+        elif len(row) >= 14:
+            # Original full log format: status is column 9.
+            t, status, rms, msx, msy, theta0 = (
+                row[0], row[9], row[10], row[11], row[12], row[13]
+            )
+        else:
             raise ValueError(
-                f"Line {line_no} has {len(row)} columns; "
-                "the complete dataset requires 15 columns."
+                f"Line {line_no} has {len(row)} columns. Expected 5 columns "
+                "(t, RMS_deg, msx, msy, theta0), 6 columns "
+                "(t, fit_status, RMS_deg, msx, msy, theta0), or the original "
+                "14+ column format."
             )
 
-        rows.append(row[:15])
+        rows.append([t, status, rms, msx, msy, theta0])
 
     if len(rows) < 2:
         raise ValueError("Please paste at least two rows of data.")
 
     data = np.asarray(rows, dtype=float)
-
-    if not np.all(np.isfinite(data)):
-        raise ValueError("The data contains NaN or infinite values.")
-
+    # Status may be NaN only for the 5-column format, where no status was logged.
+    if not np.all(np.isfinite(data[:, [0, 2, 3, 4, 5]])):
+        raise ValueError("The data contains NaN or infinite values in a plotted column.")
     if np.any(np.diff(data[:, 0]) <= 0):
         raise ValueError("Time must be in strictly ascending order.")
 
     return data
 
 
-def common_scaling_factor(sine_arrays, acc_arrays):
-    """Use one common scale factor across both X and Y sine curves and accelerations."""
-    sine_max = max(np.max(np.abs(arr)) for arr in sine_arrays)
-    acc_max = max(np.max(np.abs(arr)) for arr in acc_arrays)
-
-    if sine_max == 0:
-        return 1.0
-
-    return acc_max / sine_max
-
-
 class PlotterApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("All Data vs Time — X and Y")
+        self.root.title("Fit Parameters vs Time")
         self.root.geometry("1550x1000")
         self.root.minsize(1050, 700)
 
@@ -113,11 +101,11 @@ class PlotterApp:
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         description = (
-            "Paste the complete 15-column dataset.\n\n"
-            "t, x, y, -sin(thetax), -sin(thetay), "
-            "acc_x, acc_y, -sin(thetax_shifted), "
-            "-sin(thetay_shifted), status, RMS_deg, "
-            "msx, msy, theta0, fit_us"
+            "Paste compact data or the original full log.\n\n"
+            "Compact: t, fit_status, RMS_deg, msx, msy, theta0\n"
+            "(or 5 columns without fit_status)\n\n"
+            "The original 14+ column format is also supported. "
+            "Graphs fit_status (when present), RMS_deg, msx, msy, and theta0 against t."
         )
 
         ttk.Label(
@@ -138,7 +126,7 @@ class PlotterApp:
         )
 
         ttk.Button(
-            panel, text="Plot All Data",
+            panel, text="Plot Selected Data",
             command=self.plot_data
         ).grid(row=3, column=0, sticky="ew", pady=3)
 
@@ -160,10 +148,8 @@ class PlotterApp:
         panel.columnconfigure(0, weight=1)
         panel.rowconfigure(0, weight=1)
 
-        # All graphs share a common time axis.
-        # X-related plots are in the left column;
-        # Y-related plots are in the right column.
-        self.figure = Figure(figsize=(12, 18), dpi=90)
+        # The requested parameters and fit status share the time axis.
+        self.figure = Figure(figsize=(12, 12), dpi=90)
 
         self.axes = []
         self.canvas = FigureCanvasTkAgg(
@@ -195,121 +181,65 @@ class PlotterApp:
             messagebox.showerror("Data Error", str(error))
             return
 
+        # parse_data normalizes inputs to six columns:
+        # t, fit_status (NaN if unavailable), RMS_deg, msx, msy, theta0.
         t = data[:, 0]
-
-        # Extract columns
-        x = data[:, 1]
-        y = data[:, 2]
-        sx = data[:, 3]
-        sy = data[:, 4]
-        ax = data[:, 5]
-        ay = data[:, 6]
-        sx_shift = data[:, 7]
-        sy_shift = data[:, 8]
-        status = data[:, 9]
-        rms = data[:, 10]
-        msx = data[:, 11]
-        msy = data[:, 12]
-        theta0 = data[:, 13]
-
-        # Common scale factor for both X and Y
-        f_scale = common_scaling_factor(
-            [sx, sx_shift, sy, sy_shift],
-            [ax, ay]
-        )
+        status = data[:, 1]
+        rms = data[:, 2]
+        msx = data[:, 3]
+        msy = data[:, 4]
+        theta0 = data[:, 5]
+        has_status = np.all(np.isfinite(status))
 
         self.figure.clear()
+        self.figure.suptitle("Fit Parameters vs Time", fontsize=13)
 
-        # Four rows, two columns:
-        # row 1: positions
-        # row 2: combined X and Y plots
-        # row 3: msx and msy
-        # row 4: theta0 (left) and status / RMS_deg (right)
+        plot_count = 5 if has_status else 4
         grid = self.figure.add_gridspec(
-            4, 2,
-            hspace=0.58,
-            wspace=0.28,
-            left=0.07,
-            right=0.98,
-            top=0.96,
-            bottom=0.06
+            plot_count, 1,
+            hspace=0.42,
+            left=0.10,
+            right=0.97,
+            top=0.93,
+            bottom=0.08
         )
 
         self.axes = []
+        plot_row = 0
 
-        # --------------------------------------------------------
-        # ROW 1: POSITION
-        # --------------------------------------------------------
+        if has_status:
+            self.add_plot(
+                grid[plot_row, 0],
+                [("fit_status", t, status, {"drawstyle": "steps-post", "marker": "."})],
+                "fit_status"
+            )
+            plot_row += 1
 
         self.add_plot(
-            grid[0, 0],
-            [("x", t, x, {})],
-            "x"
+            grid[plot_row, 0],
+            [("RMS_deg", t, rms, {})],
+            "RMS_deg"
         )
+        plot_row += 1
 
         self.add_plot(
-            grid[0, 1],
-            [("y", t, y, {})],
-            "y"
-        )
-
-        # --------------------------------------------------------
-        # ROW 2: COMBINED GRAPHS
-        # --------------------------------------------------------
-
-        self.add_plot(
-            grid[1, 0],
-            [
-                ("acc_x", t, ax, {}),
-                (f"-sin(thetax) × {f_scale:.4g}", t, sx * f_scale, {"linestyle": TIGHT_DOTTED}),
-                (f"-sin(thetax_shifted) × {f_scale:.4g}", t, sx_shift * f_scale, {}),
-            ],
-            "Acceleration-scale units"
-        )
-
-        self.add_plot(
-            grid[1, 1],
-            [
-                ("acc_y", t, ay, {}),
-                (f"-sin(thetay) × {f_scale:.4g}", t, sy * f_scale, {"linestyle": TIGHT_DOTTED}),
-                (f"-sin(thetay_shifted) × {f_scale:.4g}", t, sy_shift * f_scale, {}),
-            ],
-            "Acceleration-scale units"
-        )
-
-        # --------------------------------------------------------
-        # ROW 3: FIT PARAMETERS
-        # --------------------------------------------------------
-
-        self.add_plot(
-            grid[2, 0],
+            grid[plot_row, 0],
             [("msx", t, msx, {})],
             "msx"
         )
+        plot_row += 1
 
         self.add_plot(
-            grid[2, 1],
+            grid[plot_row, 0],
             [("msy", t, msy, {})],
             "msy"
         )
-
-        # --------------------------------------------------------
-        # ROW 4: DIAGNOSTICS
-        # --------------------------------------------------------
+        plot_row += 1
 
         self.add_plot(
-            grid[3, 0],
+            grid[plot_row, 0],
             [("theta0", t, theta0, {})],
             "theta0"
-        )
-
-        self.add_plot(
-            grid[3, 1],
-            [
-                ("status", t, status, {}),
-                ("RMS_deg", t, rms, {}),
-            ],
-            "Value"
         )
 
         self.canvas.draw_idle()
