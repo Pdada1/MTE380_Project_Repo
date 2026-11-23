@@ -6,7 +6,7 @@
 #define KP 4.5
 #define KI 1.4
 #define KD 4.2
-#define I_LIMIT 3.0f
+#define I_LIMIT 4.0f
 
 void pid_set_gains(float kp, float ki, float kd);
 void pid_reset();

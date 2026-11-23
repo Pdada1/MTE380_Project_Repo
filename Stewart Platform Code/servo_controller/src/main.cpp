@@ -365,7 +365,7 @@ void loop() {
                 pid_reset();
                 num_samples = 0;
             }
-            //pid_reset(); @MM // pid would be reset if ball was lost for even one frame??
+            //pid_reset(); @MM // pid would be reset if ball was lost for even one frame????
             active = next;
         }
     }

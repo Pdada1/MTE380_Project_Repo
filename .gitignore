@@ -5,6 +5,7 @@
 .vscode/launch.json
 .vscode/ipch
 .vscode/
+Stewart Platform Code\.vscode/
 
 # SolidWorks Backup and Temp Files
 *.sldprt~*
