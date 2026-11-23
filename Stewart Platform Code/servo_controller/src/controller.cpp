@@ -1,12 +1,17 @@
 #include "controller.h"
 #include "LinearFit.h" //SimpleRegression library
-
+ 
 #define POS_SAMPLES 1
 #define VEL_SAMPLES 2
-
+ 
 float int_ex = 0;
 float int_ey = 0;
-
+ 
+void pid_reset() {
+    int_ex = 0;
+    int_ey = 0;
+}
+ 
 float e_av(BallData* ball_data, char axis) {
     float* x;
     float* xr;
@@ -30,7 +35,7 @@ float e_av(BallData* ball_data, char axis) {
     }
     return sum/POS_SAMPLES;
 }
-
+ 
 float de_av(BallData* ball_data, char axis) {
     float* x;
     switch (axis) {
@@ -53,16 +58,16 @@ float de_av(BallData* ball_data, char axis) {
         const uint32_t elapsed_ms = ball_data->frame_ms[CAMERA_SAMPLES-VEL_SAMPLES+i] - start_ms;
         t[i] = elapsed_ms / 1000.0f;
     }
-
+ 
     //Linear regression to find average velocity
     LinearFit<float, float> lf;
     lf.fit(t, ex, VEL_SAMPLES);
-
+ 
     float slope = lf.slope();
-
+ 
     return slope;
 }
-
+ 
 float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 'x' and then 'y') per new sample, otherwise integral will be inaccurate
     float e;
     // Subtract in unsigned milliseconds so elapsed time survives timestamp rollover.
@@ -83,20 +88,20 @@ float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 
             return 0;
     }
 }
-
+ 
 float pid_get_tilt(BallData* ball_data, char axis) { //Gets tilt for axis 'x' or 'y'
     float e = e_av(ball_data, axis);
     float int_e = inte(ball_data, axis);
     float d_e = de_av(ball_data, axis);
-
+ 
     float u = e*ball_data->kp + int_e*ball_data->ki + d_e*ball_data->kd;
     return u;
 }
-
+ 
 float pid_get_xtilt(BallData* ball_data) {
     return pid_get_tilt(ball_data, 'x');
 }
-
+ 
 float pid_get_ytilt(BallData* ball_data) {
     return pid_get_tilt(ball_data, 'y');
 }
