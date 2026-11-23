@@ -12,6 +12,7 @@
 #define CONTROLLER_DELAY 0.55
 #define SAMPLE_RATE_APPROX 0.05
 #define FIT_SAMPLES 50
+#define ROT_BUF_SIZE (FIT_SAMPLES + (int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX))
 
 struct RotationData { //Struct to keep track of all relevant rotation data
     float ax[FIT_SAMPLES + (int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)] = {0}; //ordered old measurements -> new measurements
@@ -24,6 +25,7 @@ struct RotationData { //Struct to keep track of all relevant rotation data
     float theta0 = 0;
     float thetax_shifted = 0;
     float thetay_shifted = 0;
+    int n_valid = 0; //Number of real samples stored at the end of the arrays
 };
 
 float pid_get_xtilt(BallData* ball_data);
@@ -32,7 +34,7 @@ float pid_get_ytilt(BallData* ball_data);
 float vel_av(BallData* ball_data, char axis);
 float acc_av(BallData* ball_data, char axis);
 
-void read_rotation_data(RotationData* rotation_data, BallData* ball_data);
+void read_rotation_data(RotationData* rotation_data, BallData* ball_data, float thetax, float thetay);
 void fit_rotation_data(RotationData* rotation_data);
 
 #endif

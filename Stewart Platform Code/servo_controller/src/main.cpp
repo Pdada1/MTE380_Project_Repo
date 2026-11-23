@@ -77,11 +77,13 @@ void loop() {
 
         //Only run controller after ballData buffers have filled
         if (num_samples >= CAMERA_SAMPLES) {
-            float thetax = pid_get_xtilt(&ballData);
+            float thetax = pid_get_xtilt(&ballData);   // call each PID function once only
             float thetay = pid_get_ytilt(&ballData);
+            thetax = constrain(thetax, -PLANE_ANGLE_MAX, PLANE_ANGLE_MAX);  // Store what the platform actually did
+            thetay = constrain(thetay, -PLANE_ANGLE_MAX, PLANE_ANGLE_MAX);
             setTilt(thetax, thetay, &ballData);
-            
-            read_rotation_data(&rotationData, &ballData);
+
+            read_rotation_data(&rotationData, &ballData, thetax, thetay);
             fit_rotation_data(&rotationData);
 
             //t, x, y, ax, ay, sin(thetax), sin(thetay)
