@@ -6,7 +6,6 @@
 #define VEL_SAMPLES (int)(4) //4 samples
 #define ACC_SAMPLES (int)(12) //12 samples
 
-static const double AZ_CONST = 5.89;        //Rolling-sphere acceleration constant (3/5 g) [m/s^2]
 static const double DEG2RAD = PI / 180.0;
 
 float int_ex = 0;
@@ -195,17 +194,122 @@ float pid_get_ytilt(BallData* ball_data, float theta0_deg) {
 }
 
 //ROTATION FITTING
-void read_rotation_data(RotationData* rotation_data, BallData* ball_data, float thetax, float thetay) {
-    //Shift data arrays to make room for new sample
-    for (int i=0; i<FIT_SAMPLES+(int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)-1; i++) {
-        rotation_data->ax[i] = rotation_data->ax[i+1];
-        rotation_data->ay[i] = rotation_data->ay[i+1];
-        rotation_data->thetax[i] = rotation_data->thetax[i+1];
-        rotation_data->thetay[i] = rotation_data->thetay[i+1];
-        rotation_data->t[i] = rotation_data->t[i+1];
-        rotation_data->off_platform[i] = rotation_data->off_platform[i+1];
+//
+//All per-sample work (tilt look-back, trig, sqrt, np/nps vectors, rejection flags) is done ONCE, when the sample
+//arrives (add_rotation_sample), and cached. fit_rotation_data() then only sums the cached vectors and solves the
+//4x4 eigenproblem, instead of redoing ~200 sin + ~330 sqrt + 50 acos on every call.
+
+static const fit_real AZ_C         = (fit_real)5.89; //Rolling-sphere acceleration constant (3/5 g) [m/s^2]
+static const fit_real AZ_C2        = AZ_C * AZ_C;
+static const fit_real DEG_TO_RAD_F = (fit_real)(PI / 180.0);
+static const fit_real RAD_TO_DEG_F = (fit_real)(180.0 / PI);
+
+#define FIT_MAX_SWEEPS 10 //Jacobi converges quadratically (3-4 sweeps typical), so this cap is only a safety net
+
+//Builds the unit vectors for one sample:
+//  nps = (-sin(thetax), -sin(thetay), 1)/norm              (from the commanded tilt, degrees)
+//  np  = (a x (-ay, ax, 0))/norm, a = (ax, ay, -az)        (from the measured acceleration, m/s^2)
+//Returns false if az / np is undefined for this sample.
+static bool build_vectors(fit_real ax, fit_real ay, fit_real thetax_deg, fit_real thetay_deg, fit_real nps[3], fit_real np_v[3]) {
+    nps[0] = -sin(thetax_deg * DEG_TO_RAD_F);
+    nps[1] = -sin(thetay_deg * DEG_TO_RAD_F);
+    nps[2] = 1;
+    fit_real nps_inv = 1 / sqrt(nps[0]*nps[0] + nps[1]*nps[1] + 1);
+    nps[0] *= nps_inv;  nps[1] *= nps_inv;  nps[2] *= nps_inv;
+
+    /* az = (c - sqrt(c^2 - 4(ax^2+ay^2))) / 2   (minus root), written in the numerically stable form */
+    fit_real r2   = ax*ax + ay*ay;
+    fit_real disc = AZ_C2 - 4*r2;
+    if (disc < 0 || r2 < (fit_real)1e-24) {
+        return false;                       /* az or np undefined */
+    }
+    fit_real az = 2 * r2 / (AZ_C + sqrt(disc));
+
+    /* The cross product works out to (az*ax, az*ay, ax^2+ay^2). */
+    np_v[0] = az * ax;
+    np_v[1] = az * ay;
+    np_v[2] = r2;
+    fit_real np_inv = 1 / sqrt(np_v[0]*np_v[0] + np_v[1]*np_v[1] + np_v[2]*np_v[2]);
+    np_v[0] *= np_inv;  np_v[1] *= np_inv;  np_v[2] *= np_inv;
+    return true;
+}
+
+//Gross-outlier limit on |(ax,ay)|^2 (limit for the maximum possible tilt), computed once
+static fit_real acc_limit_sq() {
+    static fit_real a_lim2 = -1;
+    if (a_lim2 < 0) {
+        fit_real s_max = sin(PLANE_ANGLE_MAX * DEG_TO_RAD_F);
+        fit_real q_max = 2 * s_max * s_max;                     // both axes at the cap
+        fit_real a_lim = (fit_real)ACC_LIMIT_K * AZ_C * sqrt(q_max) / (1 + q_max);
+        a_lim2 = a_lim * a_lim;
+    }
+    return a_lim2;
+}
+
+void add_rotation_sample(RotationData* rd, float t_new, float thetax, float thetay, float ax, float ay, bool off_platform) {
+    const int hist_n = FIT_HISTORY_SAMPLES;
+
+    //Shift the tilt history and append the new sample
+    for (int i = 0; i < hist_n-1; i++) {
+        rd->t[i]      = rd->t[i+1];
+        rd->thetax[i] = rd->thetax[i+1];
+        rd->thetay[i] = rd->thetay[i+1];
+    }
+    rd->t[hist_n-1]      = t_new;
+    rd->thetax[hist_n-1] = thetax;
+    rd->thetay[hist_n-1] = thetay;
+    if (rd->num_valid < hist_n) {
+        rd->num_valid++;
     }
 
+    //Ring-buffer slot for this sample
+    int slot = rd->ring_head;
+    rd->ring_head = (slot + 1 >= FIT_SAMPLES) ? 0 : slot + 1;
+
+    //The acceleration at t_new was caused by the tilt commanded CONTROLLER_DELAY earlier: linearly interpolate the
+    //tilt history at that time. The history is searched backwards from the newest sample, and nothing is extrapolated:
+    //if the history doesn't reach back far enough the sample is marked SAMPLE_NO_HISTORY.
+    float t_target = t_new - CONTROLLER_DELAY;
+    int first_valid = hist_n - rd->num_valid; //Oldest real (non zero-filled) history sample
+    int j = hist_n - 2;
+    while (j >= first_valid && rd->t[j] > t_target) {
+        j--;
+    }
+    if (j < first_valid) {
+        rd->sample_state[slot] = SAMPLE_NO_HISTORY;
+        return;
+    }
+    float dt = rd->t[j+1] - rd->t[j];
+    float frac = (dt > 1e-9f) ? (t_target - rd->t[j]) / dt : 0.0f;
+    frac = constrain(frac, 0.0f, 1.0f); //Safety: never extrapolate
+    float thx = rd->thetax[j] + (rd->thetax[j+1] - rd->thetax[j]) * frac;
+    float thy = rd->thetay[j] + (rd->thetay[j+1] - rd->thetay[j]) * frac;
+
+    //Debugging
+    rd->thetax_shifted = thx;
+    rd->thetay_shifted = thy;
+
+    //DISCARD CHECK 1: ball was off the platform
+    if (off_platform) {
+        rd->sample_state[slot] = SAMPLE_OFF_PLATFORM;
+        return;
+    }
+
+    //DISCARD CHECK 2: gross acceleration outlier
+    if ((fit_real)ax*ax + (fit_real)ay*ay > acc_limit_sq()) {
+        rd->sample_state[slot] = SAMPLE_ACC_TOO_HIGH;
+        return;
+    }
+
+    //Build and cache np / nps
+    if (!build_vectors(ax, ay, thx, thy, rd->nps_v[slot], rd->np_v[slot])) {
+        rd->sample_state[slot] = SAMPLE_UNUSABLE; /* az or np undefined: the fit skips this sample */
+        return;
+    }
+    rd->sample_state[slot] = SAMPLE_GOOD;
+}
+
+void read_rotation_data(RotationData* rotation_data, BallData* ball_data, float thetax, float thetay) {
     //Flag this sample if the ball was off the platform (|(x,y)| > PLATFORM_RADIUS_LIMIT) at any of the
     //positions that went into this acceleration estimate (the last ACC_SAMPLES positions)
     bool off_platform = false;
@@ -217,132 +321,50 @@ void read_rotation_data(RotationData* rotation_data, BallData* ball_data, float 
         }
     }
 
-    //Add new sample to end of arrays
-    rotation_data->ax[FIT_SAMPLES+(int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)-1] = acc_av(ball_data, 'x') * (S/(float)1000); //Scale back to m/s^2
-    rotation_data->ay[FIT_SAMPLES+(int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)-1] = acc_av(ball_data, 'y') * (S/(float)1000);
-    rotation_data->thetax[FIT_SAMPLES+(int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)-1] = thetax; //Tilt already computed by the PID this sample (don't call the PID again: that would integrate twice)
-    rotation_data->thetay[FIT_SAMPLES+(int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)-1] = thetay;
-    rotation_data->t[FIT_SAMPLES+(int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)-1] = ball_data->t[CAMERA_SAMPLES-1];
-    rotation_data->off_platform[FIT_SAMPLES+(int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)-1] = off_platform;
+    float ax = acc_av(ball_data, 'x') * (S/(float)1000); //Scale back to m/s^2
+    float ay = acc_av(ball_data, 'y') * (S/(float)1000);
 
-    //Count real samples (the arrays start out zero-filled)
-    if (rotation_data->num_valid < FIT_SAMPLES+(int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)) {
-        rotation_data->num_valid++;
-    }
-}
-
-//Builds the unit vectors for one sample:
-//  nps = (-sin(thetax), -sin(thetay), 1)/norm              (from the commanded tilt, degrees)
-//  np  = (a x (-ay, ax, 0))/norm, a = (ax, ay, -az)        (from the measured acceleration, m/s^2)
-//Returns false if az / np is undefined for this sample.
-static bool build_vectors(double ax, double ay, double thetax_deg, double thetay_deg, double nps[3], double np_v[3]) {
-    nps[0] = -sin(thetax_deg * DEG2RAD);
-    nps[1] = -sin(thetay_deg * DEG2RAD);
-    nps[2] = 1.0;
-    double nps_len = sqrt(nps[0]*nps[0] + nps[1]*nps[1] + 1.0);
-    nps[0] /= nps_len;  nps[1] /= nps_len;  nps[2] /= nps_len;
-
-    /* az = (c - sqrt(c^2 - 4(ax^2+ay^2))) / 2   (minus root) */
-    double r2   = ax*ax + ay*ay;
-    double disc = AZ_CONST*AZ_CONST - 4.0*r2;
-    if (disc < 0.0 || r2 < 1e-24) {
-        return false;                       /* az or np undefined */
-    }
-    double az = 2.0 * r2 / (AZ_CONST + sqrt(disc));
-
-    /* The cross product works out to (az*ax, az*ay, ax^2+ay^2). */
-    np_v[0] = az * ax;
-    np_v[1] = az * ay;
-    np_v[2] = r2;
-    double np_len = sqrt(np_v[0]*np_v[0] + np_v[1]*np_v[1] + np_v[2]*np_v[2]);
-    np_v[0] /= np_len;  np_v[1] /= np_len;  np_v[2] /= np_len;
-    return true;
+    //thetax, thetay: tilt already computed by the PID this sample (don't call the PID again: that would integrate twice)
+    add_rotation_sample(rotation_data, ball_data->t[CAMERA_SAMPLES-1], thetax, thetay, ax, ay, off_platform);
 }
 
 void fit_rotation_data(RotationData* rotation_data) {
-    //The arrays are ordered old -> new. The fit window is the newest FIT_SAMPLES samples; the samples before it
-    //are the tilt history needed to look back CONTROLLER_DELAY from the start of the window.
-    int buffer_size = FIT_SAMPLES+(int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX);
-    int t_start_index = buffer_size - FIT_SAMPLES;               //Oldest sample in the window
-    int first_valid_index = buffer_size - rotation_data->num_valid; //Oldest real (non zero-filled) sample
-
-    //Need a full window of real samples, plus real history reaching back CONTROLLER_DELAY before the window start
-    if (first_valid_index > t_start_index ||
-        rotation_data->t[t_start_index] - CONTROLLER_DELAY < rotation_data->t[first_valid_index]) {
+    //Look at the state of the newest FIT_SAMPLES samples
+    bool no_history = false, off_platform = false, acc_high = false;
+    for (int i = 0; i < FIT_SAMPLES; i++) {
+        switch (rotation_data->sample_state[i]) {
+            case SAMPLE_NO_HISTORY:     no_history   = true; break;
+            case SAMPLE_OFF_PLATFORM:   off_platform = true; break;
+            case SAMPLE_ACC_TOO_HIGH:   acc_high     = true; break;
+            default: break;
+        }
+    }
+    if (no_history) {   //Need a full window of samples, each with enough tilt history to look back CONTROLLER_DELAY
         //Serial.println(F("Not enough samples to fit rotation data!"));
         rotation_data->fit_status = FIT_NOT_ENOUGH_SAMPLES;
         return;
     }
-
-    //Window of FIT_SAMPLES
-    float ax[FIT_SAMPLES] = {0};
-    float ay[FIT_SAMPLES] = {0};
-    for (int i=0; i<FIT_SAMPLES; i++) {
-        ax[i] = rotation_data->ax[t_start_index+i];
-        ay[i] = rotation_data->ay[t_start_index+i];
+    if (off_platform) {
+        rotation_data->fit_status = FIT_OFF_PLATFORM;
+        return; //Keep old msx, msy, theta0
+    }
+    if (acc_high) {
+        rotation_data->fit_status = FIT_ACC_TOO_HIGH;
+        return; //Keep old msx, msy, theta0
     }
 
-    //Shift thetax and thetay by CONTROLLER_DELAY: the acceleration at time T[i] was caused by the tilt commanded at
-    //T[i] - CONTROLLER_DELAY. Linearly interpolate the recorded tilt history at those times. For the first samples of
-    //the window those times fall before the window start, so the history stored before the window is used (nothing
-    //is extrapolated; the check above guarantees the history reaches back far enough).
-    float thetax[FIT_SAMPLES] = {0};
-    float thetay[FIT_SAMPLES] = {0};
-    int j = first_valid_index; //Left index of the bracketing pair; only moves forward since the target times increase
-    for (int i=0; i<FIT_SAMPLES; i++) {
-        float t_target = rotation_data->t[t_start_index+i] - CONTROLLER_DELAY;
-
-        //Move j to the last index with t[j] <= t_target (keeping j+1 inside the array)
-        while (j+1 < buffer_size-1 && rotation_data->t[j+1] <= t_target) {
-            j++;
-        }
-
-        float dt = rotation_data->t[j+1] - rotation_data->t[j];
-        float frac = (dt > 1e-9f) ? (t_target - rotation_data->t[j]) / dt : 0.0f;
-        frac = constrain(frac, 0.0f, 1.0f); //Safety: never extrapolate
-
-        thetax[i] = rotation_data->thetax[j] + (rotation_data->thetax[j+1] - rotation_data->thetax[j]) * frac;
-        thetay[i] = rotation_data->thetay[j] + (rotation_data->thetay[j+1] - rotation_data->thetay[j]) * frac;
-    }
-
-    //Debugging
-    rotation_data->thetax_shifted = thetax[FIT_SAMPLES-1];
-    rotation_data->thetay_shifted = thetay[FIT_SAMPLES-1];
-
-    // Now we have ax[],ay[],thetax[],thetay[] compensated for CONTROLLER_DELAY, all at the same time instances.
-
-    //DISCARD CHECK 1: ball was off the platform (|(x,y)| > PLATFORM_RADIUS_LIMIT) at any sample in the window
-    for (int i=0; i<FIT_SAMPLES; i++) {
-        if (rotation_data->off_platform[t_start_index+i]) {
-            rotation_data->fit_status = FIT_OFF_PLATFORM;
-            return; //Keep old msx, msy, theta0
-        }
-    }
-
-    //DISCARD CHECK 2: gross acceleration outlier (limit for the maximum possible tilt)
-    const double s_max  = sin(PLANE_ANGLE_MAX * DEG2RAD);
-    const double q_max  = 2.0 * s_max * s_max;                  // both axes at the cap
-    const double a_lim  = ACC_LIMIT_K * AZ_CONST * sqrt(q_max) / (1.0 + q_max);
-    const double a_lim2 = a_lim * a_lim;
-    for (int i = 0; i < FIT_SAMPLES; i++) {
-        if ((double)ax[i]*ax[i] + (double)ay[i]*ay[i] > a_lim2) {
-            rotation_data->fit_status = FIT_ACC_TOO_HIGH;
-            return; //Keep old msx, msy, theta0
-        }
-    }
-
-    double msx, msy, theta0;
+    fit_real msx, msy, theta0;
     {
-        /* ---------- 1. attitude profile matrix B = sum( np * nps^T ) ---------- */
-        double B[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+        /* ---------- 1. attitude profile matrix B = sum( np * nps^T ) over the cached vectors ---------- */
+        fit_real B[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
         int n_used = 0;
 
         for (int i = 0; i < FIT_SAMPLES; i++) {
-            double nps[3], np_v[3];
-            if (!build_vectors(ax[i], ay[i], thetax[i], thetay[i], nps, np_v)) {
+            if (rotation_data->sample_state[i] != SAMPLE_GOOD) {
                 continue;                       /* az or np undefined: skip sample */
             }
-
+            const fit_real* np_v = rotation_data->np_v[i];
+            const fit_real* nps  = rotation_data->nps_v[i];
             for (int j = 0; j < 3; j++) {
                 for (int k = 0; k < 3; k++) {
                     B[j][k] += np_v[j] * nps[k];
@@ -357,15 +379,15 @@ void fit_rotation_data(RotationData* rotation_data) {
         }
 
         /* ---------- 2. Davenport K matrix (4x4 symmetric) ---------- */
-        double sigma = B[0][0] + B[1][1] + B[2][2];
-        double zx = B[1][2] - B[2][1];
-        double zy = B[2][0] - B[0][2];
-        double zz = B[0][1] - B[1][0];
+        fit_real sigma = B[0][0] + B[1][1] + B[2][2];
+        fit_real zx = B[1][2] - B[2][1];
+        fit_real zy = B[2][0] - B[0][2];
+        fit_real zz = B[0][1] - B[1][0];
 
-        double K[4][4];
+        fit_real K[4][4];
         for (int j = 0; j < 3; j++) {
             for (int k = 0; k < 3; k++) {
-                K[j][k] = B[j][k] + B[k][j] - ((j == k) ? sigma : 0.0);
+                K[j][k] = B[j][k] + B[k][j] - ((j == k) ? sigma : 0);
             }
         }
         K[0][3] = zx;  K[3][0] = zx;
@@ -374,41 +396,51 @@ void fit_rotation_data(RotationData* rotation_data) {
         K[3][3] = sigma;
 
         /* ---------- 3. eigenvectors of K by Jacobi rotations ---------- */
-        double V[4][4] = {{1,0,0,0}, {0,1,0,0}, {0,0,1,0}, {0,0,0,1}};
+        //Convergence is relative to the size of K (an absolute tolerance can be unreachable in float)
+        fit_real fro2 = 0;
+        for (int j = 0; j < 4; j++) {
+            for (int k = 0; k < 4; k++) {
+                fro2 += K[j][k] * K[j][k];
+            }
+        }
+        const fit_real tol2  = (fit_real)1e-12 * fro2; //Stop when the off-diagonal sum of squares is below this
+        const fit_real skip2 = tol2 / 6;               //An element this small needs no rotation
 
-        for (int sweep = 0; sweep < 50; sweep++) {
-            double off = 0.0;
+        fit_real V[4][4] = {{1,0,0,0}, {0,1,0,0}, {0,0,1,0}, {0,0,0,1}};
+
+        for (int sweep = 0; sweep < FIT_MAX_SWEEPS; sweep++) {
+            fit_real off = 0;
             for (int p = 0; p < 3; p++) {
                 for (int q = p + 1; q < 4; q++) {
                     off += K[p][q] * K[p][q];
                 }
             }
-            if (off < 1e-12) {
+            if (off <= tol2) {
                 break;
             }
             for (int p = 0; p < 3; p++) {
                 for (int q = p + 1; q < 4; q++) {
-                    if (fabs(K[p][q]) < 1e-12) {
+                    if (K[p][q] * K[p][q] <= skip2) {
                         continue;
                     }
-                    double th = (K[q][q] - K[p][p]) / (2.0 * K[p][q]);
-                    double tn = ((th >= 0.0) ? 1.0 : -1.0)
-                                / (fabs(th) + sqrt(th*th + 1.0));
-                    double cs = 1.0 / sqrt(tn*tn + 1.0);
-                    double sn = tn * cs;
+                    fit_real th = (K[q][q] - K[p][p]) / (2 * K[p][q]);
+                    fit_real tn = ((th >= 0) ? 1 : -1)
+                                / (fabs(th) + sqrt(th*th + 1));
+                    fit_real cs = 1 / sqrt(tn*tn + 1);
+                    fit_real sn = tn * cs;
 
                     for (int k = 0; k < 4; k++) {          /* K = K * J   */
-                        double kp = K[k][p], kq = K[k][q];
+                        fit_real kp = K[k][p], kq = K[k][q];
                         K[k][p] = cs*kp - sn*kq;
                         K[k][q] = sn*kp + cs*kq;
                     }
                     for (int k = 0; k < 4; k++) {          /* K = J^T * K */
-                        double kp = K[p][k], kq = K[q][k];
+                        fit_real kp = K[p][k], kq = K[q][k];
                         K[p][k] = cs*kp - sn*kq;
                         K[q][k] = sn*kp + cs*kq;
                     }
                     for (int k = 0; k < 4; k++) {          /* V = V * J   */
-                        double vp = V[k][p], vq = V[k][q];
+                        fit_real vp = V[k][p], vq = V[k][q];
                         V[k][p] = cs*vp - sn*vq;
                         V[k][q] = sn*vp + cs*vq;
                     }
@@ -424,21 +456,21 @@ void fit_rotation_data(RotationData* rotation_data) {
                 imax = k;
             }
         }
-        double q1 = V[0][imax], q2 = V[1][imax], q3 = V[2][imax], q4 = V[3][imax];
-        double qn = sqrt(q1*q1 + q2*q2 + q3*q3 + q4*q4);
+        fit_real q1 = V[0][imax], q2 = V[1][imax], q3 = V[2][imax], q4 = V[3][imax];
+        fit_real qn = sqrt(q1*q1 + q2*q2 + q3*q3 + q4*q4);
         q1 /= qn;  q2 /= qn;  q3 /= qn;  q4 /= qn;
 
         /* ---------- 4. rotation matrix entries needed (np = R * nps) ---------- */
-        double d = q4*q4 - q1*q1 - q2*q2 - q3*q3;
-        double R00 = d + 2.0*q1*q1;
-        double R10 = 2.0*(q1*q2 - q4*q3);
-        double R20 = 2.0*(q1*q3 + q4*q2);
-        double R02 = 2.0*(q1*q3 - q4*q2);
-        double R12 = 2.0*(q2*q3 + q4*q1);
-        double R22 = d + 2.0*q3*q3;
+        fit_real d = q4*q4 - q1*q1 - q2*q2 - q3*q3;
+        fit_real R00 = d + 2*q1*q1;
+        fit_real R10 = 2*(q1*q2 - q4*q3);
+        fit_real R20 = 2*(q1*q3 + q4*q2);
+        fit_real R02 = 2*(q1*q3 - q4*q2);
+        fit_real R12 = 2*(q2*q3 + q4*q1);
+        fit_real R22 = d + 2*q3*q3;
 
         /* ---------- 5. back-calculate msx, msy, theta0 ---------- */
-        if (!(R22 > 1e-9)) {                        /* ns_z must be > 0 for ns = (-msx, -msy, 1)/norm */
+        if (!(R22 > (fit_real)1e-9)) {              /* ns_z must be > 0 for ns = (-msx, -msy, 1)/norm */
             rotation_data->fit_status = FIT_DEGENERATE;
             return;
         }
@@ -448,47 +480,30 @@ void fit_rotation_data(RotationData* rotation_data) {
         msy = -R12 / R22;
 
         /* s = (1, 0, msx) / norm */
-        double s_len = sqrt(1.0 + msx*msx);
-        double sx = 1.0 / s_len;
-        double sz = msx / s_len;
+        fit_real s_len = sqrt(1 + msx*msx);
+        fit_real sx = 1 / s_len;
+        fit_real sz = msx / s_len;
 
         /* c = ns x s   (s_y = 0) */
-        double cx = R12*sz;                     /* ns_y*s_z - ns_z*0         */
-        double cy = R22*sx - R02*sz;            /* ns_z*s_x - ns_x*s_z       */
-        double cz = -R12*sx;                    /* ns_x*0   - ns_y*s_x       */
+        fit_real cx = R12*sz;                       /* ns_y*s_z - ns_z*0         */
+        fit_real cy = R22*sx - R02*sz;              /* ns_z*s_x - ns_x*s_z       */
+        fit_real cz = -R12*sx;                      /* ns_x*0   - ns_y*s_x       */
 
         /* first column of R is x0 = s*cos(theta0) + c*sin(theta0) */
-        double x0_dot_s = R00*sx + R20*sz;
-        double x0_dot_c = R00*cx + R10*cy + R20*cz;
-        double theta0_rad = atan2(x0_dot_c, x0_dot_s);
-        theta0 = theta0_rad * (180.0 / PI);
+        fit_real x0_dot_s = R00*sx + R20*sz;
+        fit_real x0_dot_c = R00*cx + R10*cy + R20*cz;
+        theta0 = atan2(x0_dot_c, x0_dot_s) * RAD_TO_DEG_F;
 
         /* ---------- 6. RMS angle between np_calculated = [x0 y0 ns]*nps and np_measured ---------- */
-        double cos_t = cos(theta0_rad);
-        double sin_t = sin(theta0_rad);
-        double X0[3] = { sx*cos_t + cx*sin_t,  cy*sin_t,  sz*cos_t + cz*sin_t };  /* x0 = s cos + c sin */
-        double Y0[3] = { cx*cos_t - sx*sin_t,  cy*cos_t,  cz*cos_t - sz*sin_t };  /* y0 = c cos - s sin */
-        double NS[3] = { R02, R12, R22 };                                         /* ns                 */
-
-        double sum_sq = 0.0;
-        int n_rms = 0;
-        for (int i = 0; i < FIT_SAMPLES; i++) {
-            double nps[3], np_v[3];
-            if (!build_vectors(ax[i], ay[i], thetax[i], thetay[i], nps, np_v)) {
-                continue;
-            }
-            double npc[3];
-            for (int j = 0; j < 3; j++) {
-                npc[j] = X0[j]*nps[0] + Y0[j]*nps[1] + NS[j]*nps[2];
-            }
-            double dot = npc[0]*np_v[0] + npc[1]*np_v[1] + npc[2]*np_v[2];
-            dot = constrain(dot, -1.0, 1.0);
-            double ang_deg = acos(dot) * (180.0 / PI);
-            sum_sq += ang_deg * ang_deg;
-            n_rms++;
+        //For unit vectors, sum |np - R*nps|^2 = 2*(n - lambda_max), where lambda_max is the largest eigenvalue of K.
+        //|np - R*nps| = 2*sin(angle/2) ~ angle, so this is the RMS angle (agrees with the explicit per-sample angle
+        //to within ~angle^2/24, i.e. 0.01 % at 3 deg) without a second pass over the samples or any acos().
+        fit_real mse = 2 * ((fit_real)n_used - K[imax][imax]) / n_used;
+        if (mse < 0) {
+            mse = 0;                                //Rounding can push a perfect fit slightly negative
         }
-        double rms_deg = sqrt(sum_sq / n_rms);
-        rotation_data->rms_deg = (float)rms_deg;
+        fit_real rms_deg = sqrt(mse) * RAD_TO_DEG_F;
+        rotation_data->rms_deg = rms_deg;
 
         //DISCARD CHECK 3: fit too poor (also rejects NaN)
         if (!(rms_deg <= RMS_LIMIT_DEG)) {
@@ -497,7 +512,7 @@ void fit_rotation_data(RotationData* rotation_data) {
         }
     }
 
-    if (!(fabs(msx) < 1e9 && fabs(msy) < 1e9 && fabs(theta0) <= 360.0)) { //Also rejects NaN/inf
+    if (!(fabs(msx) < 1e9 && fabs(msy) < 1e9 && fabs(theta0) <= 360)) { //Also rejects NaN/inf
         rotation_data->fit_status = FIT_DEGENERATE;
         return;
     }

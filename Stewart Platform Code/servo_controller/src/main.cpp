@@ -90,10 +90,10 @@ void loop() {
             thetay = constrain(thetay, -PLANE_ANGLE_MAX, PLANE_ANGLE_MAX);
             setTilt(thetax, thetay, &ballData);
             
-            read_rotation_data(&rotationData, &ballData, thetax, thetay);
             unsigned long t0 = micros();
+            read_rotation_data(&rotationData, &ballData, thetax, thetay);
             fit_rotation_data(&rotationData);
-            unsigned long fit_us = micros() - t0;
+            unsigned long fit_us = micros() - t0; //read_rotation_data() + fit_rotation_data()
 
             // // t, x, y, ax, ay, sin(thetax), sin(thetay)
             // Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);
@@ -131,12 +131,12 @@ void loop() {
             Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);              Serial.print(' ');
             Serial.print(ballData.x[CAMERA_SAMPLES-1], 3);              Serial.print(' ');
             Serial.print(ballData.y[CAMERA_SAMPLES-1], 3);              Serial.print(' ');
-            Serial.print(thetax, 2);                                    Serial.print(' ');
-            Serial.print(thetay, 2);                                    Serial.print(' ');
+            Serial.print(-sin(thetax*PI/180), 2);                       Serial.print(' ');
+            Serial.print(-sin(thetay*PI/180), 2);                       Serial.print(' ');
             Serial.print(acc_av(&ballData, 'x') * (S/(float)1000), 4);  Serial.print(' ');
             Serial.print(acc_av(&ballData, 'y') * (S/(float)1000), 4);  Serial.print(' ');
-            Serial.print(rotationData.thetax_shifted, 2);               Serial.print(' ');
-            Serial.print(rotationData.thetay_shifted, 2);               Serial.print(' ');
+            Serial.print(-sin(rotationData.thetax_shifted*PI/180), 2);  Serial.print(' ');
+            Serial.print(-sin(rotationData.thetay_shifted*PI/180), 2);  Serial.print(' ');
             Serial.print((int)rotationData.fit_status);                 Serial.print(' ');
             Serial.print(rotationData.rms_deg, 2);                      Serial.print(' ');
             Serial.print(rotationData.msx, 4);                          Serial.print(' ');

@@ -11,7 +11,7 @@
 #define CONTROLLER_DELAY_MAX 2.0
 #define CONTROLLER_DELAY 0.55
 #define SAMPLE_RATE_APPROX 0.05
-#define FIT_SAMPLES 50
+#define FIT_SAMPLES 10
 
 //Limits for rejecting rotation-fit data. Rejected data -> keep the old msx, msy, theta0.
 #define PLATFORM_RADIUS_LIMIT 1.0 //Reject if |(x,y)| > this (x,y are in units of S, so 1 = platform edge)
@@ -27,18 +27,37 @@ enum FitStatus : uint8_t { //Result of the most recent fit_rotation_data() call
     FIT_DEGENERATE             //Rejected: too few usable samples / rotation can't be parameterized
 };
 
+typedef float fit_real; //Precision used by the rotation fit. float is plenty and much faster than double on boards without a double FPU
+                        //(on AVR they are the same). Change to double to get the old numerics back.
+
+//Tilt history kept for looking back CONTROLLER_DELAY (needs to cover at least CONTROLLER_DELAY_MAX)
+#define FIT_HISTORY_SAMPLES ((int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX) + 2)
+
+enum SampleState : uint8_t { //What add_rotation_sample() decided about one sample
+    SAMPLE_NO_HISTORY = 0,   //Not enough tilt history yet to look back CONTROLLER_DELAY (also the initial state)
+    SAMPLE_GOOD,             //Usable
+    SAMPLE_UNUSABLE,         //az / np undefined for this sample (skipped by the fit)
+    SAMPLE_OFF_PLATFORM,     //Ball was off the platform
+    SAMPLE_ACC_TOO_HIGH      //Acceleration outlier
+};
+
 struct RotationData { //Struct to keep track of all relevant rotation data
-    float ax[FIT_SAMPLES + (int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)] = {0}; //ordered old measurements -> new measurements
-    float ay[FIT_SAMPLES + (int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)] = {0};
-    float thetax[FIT_SAMPLES + (int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)] = {0};
-    float thetay[FIT_SAMPLES + (int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)] = {0};
-    float t[FIT_SAMPLES + (int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)] = {0}; //t of each sample [s]
-    bool off_platform[FIT_SAMPLES + (int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX)] = {false}; //true if the ball was off the platform for this sample
-    int num_valid = 0; //Number of real samples stored so far (the arrays start out zero-filled), saturates at the array size
+    //Tilt history, ordered old -> new, used to look back CONTROLLER_DELAY for each new sample
+    float t[FIT_HISTORY_SAMPLES] = {0};      //t of each sample [s]
+    float thetax[FIT_HISTORY_SAMPLES] = {0}; //commanded tilt [deg]
+    float thetay[FIT_HISTORY_SAMPLES] = {0};
+    int num_valid = 0; //Number of real samples in the history arrays (they start out zero-filled). Set to 0 to force a refill.
+
+    //Per-sample results for the newest FIT_SAMPLES samples, computed once when each sample arrives (ring buffer, order irrelevant)
+    fit_real np_v[FIT_SAMPLES][3] = {{0}};  //unit normal from the measured acceleration
+    fit_real nps_v[FIT_SAMPLES][3] = {{0}}; //unit normal from the delay-compensated commanded tilt
+    uint8_t sample_state[FIT_SAMPLES] = {0}; //SampleState of each slot
+    int ring_head = 0; //Next slot to overwrite
+
     float msx = 0;
     float msy = 0;
     float theta0 = 0;
-    float thetax_shifted = 0;
+    float thetax_shifted = 0; //Delay-compensated tilt of the newest sample [deg]
     float thetay_shifted = 0;
     float rms_deg = 0; //RMS angle between np_calculated and np_measured from the latest fit [deg] (useful for tuning RMS_LIMIT_DEG)
     FitStatus fit_status = FIT_NOT_ENOUGH_SAMPLES;
@@ -53,6 +72,9 @@ float acc_av(BallData* ball_data, char axis);
 
 //thetax, thetay: the tilt that was just computed by the PID this sample (pass the same values you give to setTilt)
 void read_rotation_data(RotationData* rotation_data, BallData* ball_data, float thetax, float thetay);
+
+//Lower-level version of read_rotation_data(): add one sample given its acceleration [m/s^2] and off-platform flag
+void add_rotation_sample(RotationData* rotation_data, float t, float thetax, float thetay, float ax, float ay, bool off_platform);
 void fit_rotation_data(RotationData* rotation_data);
 
 #endif
