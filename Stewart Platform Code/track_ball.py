@@ -10,6 +10,7 @@ import time
 
 import cv2
 
+from circle_feedforward import CircleFeedforward
 from helper import SERVO_PINS, open_camera
 
 
@@ -18,16 +19,17 @@ SYNC = bytes((0x0B, 0x00, 0x0B))
 PACKET = struct.Struct("<3sB3B4fI3f")
 ARDUINO_SERIAL_PORT = "COM5"
 BAUD_RATE = 115200
-DEFAULT_GAINS = (6.0, 0.1, 4.8)
-TRAJECTORY_GAINS = (6.0, 1.8, 4.5)  # Kp, Ki, Kd for circle tracking
+DEFAULT_GAINS = (5.0, 1.6, 4.0)
+TRAJECTORY_GAINS = (7.5, 0.6, 5.0)  # Kp, Ki, Kd for circle and polygon tracking
 
-TRAJECTORY_SPEED = 0.5
-TRACKING_SLOW_ERROR = 0.05
-TRACKING_PAUSE_ERROR = 0.30
-MIN_SPEED_FACTOR = 0.5
-CIRCLE_POINTS = 108              # More points make the displayed circle smoother
-WAYPOINT_TOLERANCE = 0.10      # Arrival distance as a fraction of platform radius
-PLATFORM_MARGIN = 0.10         # Keep trajectories away from the platform edge
+# Speeds are in platform radii per second. Errors are fractions of the radius.
+CIRCLE_SPEED = 0.15
+CIRCLE_SLOW_ERROR = 0.10
+CIRCLE_PAUSE_ERROR = 0.40
+CIRCLE_POINTS = 72
+CIRCLE_PLATFORM_MARGIN = 0.10
+
+POLYGON_VERTEX_TOLERANCE = 0.10
 
 HISTORY_SECONDS = 30
 TRIM_LIMIT = 10
@@ -152,25 +154,27 @@ class Trajectory:
         self.shape = shape
         self.segment = 0
         self.distance = 0.0
+        self.circle = CircleFeedforward() if shape == "circle" else None
 
     def advance(self, platform, ball, target, dt):
         """Return the next target and whether the path is complete."""
         error = math.dist(ball, platform.normalize(target))
         if self.shape == "polygon":
-            # Hold the current vertex until the ball reaches it.
-            if error > WAYPOINT_TOLERANCE:
-                return target, False
-            if self.segment == len(self.points) - 1:
-                return target, True
-            self.segment += 1
-            return self.points[self.segment], False
+            return self.advance_polygon(target, error)
 
-        if error >= TRACKING_PAUSE_ERROR:
-            return target, False
-        # Slow the target as the ball falls behind.
-        factor = min(1.0, (TRACKING_PAUSE_ERROR - error) / (TRACKING_PAUSE_ERROR - TRACKING_SLOW_ERROR))
-        speed = MIN_SPEED_FACTOR + (1 - MIN_SPEED_FACTOR) * factor
-        distance = TRAJECTORY_SPEED * platform.radius * dt * speed
+        # Fade to zero as tracking error grows, with no jump at either threshold.
+        factor = (CIRCLE_PAUSE_ERROR - error) / (CIRCLE_PAUSE_ERROR - CIRCLE_SLOW_ERROR)
+        factor = max(0.0, min(1.0, factor))
+        speed = factor * factor * (3 - 2 * factor)
+        # Circle chords all have the same length. Slow down before the final target.
+        chord = math.dist(self.points[0], self.points[1])
+        remaining = (len(self.points) - 1 - self.segment) * chord - self.distance
+        if remaining <= 1e-6:
+            self.circle.stop()
+            return self.points[-1], True
+        distance = platform.radius * self.circle.advance(
+            dt, CIRCLE_SPEED * speed, CIRCLE_SPEED, remaining / platform.radius
+        )
         while self.segment < len(self.points) - 1:
             a, b = self.points[self.segment:self.segment + 2]
             length = math.dist(a, b)
@@ -182,7 +186,19 @@ class Trajectory:
             distance -= remaining
             self.segment += 1
             self.distance = 0.0
+        self.circle.stop()
         return self.points[-1], True
+
+
+    def advance_polygon(self, target, error):
+        """Hold each vertex as the target until the ball reaches it."""
+        if error >= POLYGON_VERTEX_TOLERANCE:
+            return target, False
+        if self.segment == len(self.points) - 1:
+            return target, True
+
+        self.segment += 1
+        return self.points[self.segment], False
 
 
 def make_trajectory(platform, start_px, shape):
@@ -190,7 +206,7 @@ def make_trajectory(platform, start_px, shape):
     ox, oy = platform.origin
     x, y = start_px
     radius = platform.radius
-    safe_radius = radius * (1 - PLATFORM_MARGIN)
+    safe_radius = radius * (1 - CIRCLE_PLATFORM_MARGIN)
     distance = math.hypot(x - ox, y - oy)
 
     if shape == "circle":
@@ -264,7 +280,7 @@ class Tracker:
 
     def active_gains(self, manual_gains):
         """Return the editable gain set for the current tracking mode."""
-        if self.path is not None and self.path.shape == "circle":
+        if self.path is not None and self.path.shape in ("circle"):
             return self.trajectory_gains
         return manual_gains
 
@@ -275,15 +291,19 @@ class Tracker:
 
     def process_frame(self, now, frame, detector):
         """Detect the ball, update the path and history, and report completion."""
-        dt = min(now - self.frame_time, 0.1) if self.frame_time is not None else 0
+        frame_gap = now - self.frame_time if self.frame_time is not None else 0
+        dt = min(frame_gap, 0.1)
         self.frame, self.frame_time = frame, now
         self.detection = detector.detect(frame) if detector is not None else None
         if self.platform is None:
             return False
         ball = self.platform.normalize(self.detection[0]) if self.detection is not None else None
         complete = False
-        if self.path is not None and ball is not None:
-            self.target, complete = self.path.advance(self.platform, ball, self.target, dt)
+        if self.path is not None:
+            if self.path.circle is not None and (ball is None or dt == 0 or frame_gap > 0.25):
+                self.path.circle.stop()
+            elif ball is not None:
+                self.target, complete = self.path.advance(self.platform, ball, self.target, dt)
         self.history.add(now, ball, self.platform.normalize(self.target))
         return complete
 
@@ -317,6 +337,9 @@ class Tracker:
         tracking_gains = gains
         if status in (Status.TRACKING, Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL):
             tracking_gains = tuple(value / 10 for value in self.active_gains(manual_gains))
+        if status == Status.TRACKING and self.path is not None and self.path.circle is not None:
+            kp, _, kd = tracking_gains
+            target = self.path.circle.command_target(target, kp, kd)
         command = PACKET.pack(SYNC, status, *pins, *ball, *target, timestamp, *tracking_gains)
         level = PACKET.pack(SYNC, Status.LEVEL, *level_pins, 0, 0, 0, 0, frame_ms, *gains)
         put_latest(hardware.commands, (trim, command, level, mode_request))

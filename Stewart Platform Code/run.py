@@ -318,10 +318,13 @@ class App:
         if elapsed < 0.75:
             return
 
-        geometry = find_platform(frame)
+        missing = []
+        geometry = find_platform(frame, missing)
         if geometry is None:
             if elapsed >= 5:
-                self.finish_identification("RGB markers could not be detected. Calibration not saved.")
+                reason = (f"Missing marker candidates ({', '.join(missing)})." if missing
+                          else "RGB candidates did not form a valid platform circle.")
+                self.finish_identification(f"{reason} Calibration not saved.")
             return
 
         pins = self.mapped_servo_pins()
@@ -471,6 +474,7 @@ class App:
             return
 
         self.tracker.start_path([*self.polygon_points, self.polygon_points[0]], "polygon")
+        self.refresh_pid_controls()
         self.go_button.state(["disabled"])
         self.notice("Following the polygon back to point 1.")
 
