@@ -197,6 +197,14 @@ void update_shifted_tilt(RotationData* rd, float t_new, float thetax, float thet
     const int hist_n = FIT_HISTORY_SAMPLES;
     rd->shifted_valid = false; //Set again below if the lookback succeeds
 
+#if SEED_TILT_HISTORY
+    //History is empty (power-up or refill after a dropout): remember the last commanded tilt (zero at power-up, when the
+    //platform is level; after a dropout the servos simply hold their last command) to seed it below
+    bool seed = (rd->num_valid == 0);
+    float seed_x = rd->thetax[hist_n - 1];
+    float seed_y = rd->thetay[hist_n - 1];
+#endif
+
     //Shift the tilt history and append the new sample
     for (int i = 0; i < hist_n - 1; i++) {
         rd->t[i]      = rd->t[i + 1];
@@ -209,6 +217,19 @@ void update_shifted_tilt(RotationData* rd, float t_new, float thetax, float thet
     if (rd->num_valid < hist_n) {
         rd->num_valid++;
     }
+
+#if SEED_TILT_HISTORY
+    if (seed) {
+        //Everything older than the new sample holds the seed tilt, with the newest seed entry just before t_new so the
+        //lookback interpolates seed -> seed until real samples are old enough
+        for (int i = 0; i < hist_n - 1; i++) {
+            rd->t[i]      = (i < hist_n - 2) ? (t_new - CONTROLLER_DELAY_MAX) : (t_new - 1e-3f);
+            rd->thetax[i] = seed_x;
+            rd->thetay[i] = seed_y;
+        }
+        rd->num_valid = hist_n;
+    }
+#endif
 
     //Linearly interpolate the tilt history CONTROLLER_DELAY earlier
     float t_target = t_new - CONTROLLER_DELAY;
@@ -485,9 +506,10 @@ bool wahba_update(RotationData* rd, BallData* ball_data) {
         return false;
     }
 
-    //Sample spacing
+    //Sample spacing (denser while the buffer fills, so the first fits arrive sooner)
+    int spacing = (rd->wahba_count < WAHBA_FIT_SAMPLES) ? WAHBA_FILL_SPACING : WAHBA_SAMPLE_SPACING;
     rd->wahba_spacing_ctr++;
-    if (rd->wahba_spacing_ctr < WAHBA_SAMPLE_SPACING) {
+    if (rd->wahba_spacing_ctr < spacing) {
         return false;
     }
     rd->wahba_spacing_ctr = 0;
@@ -518,7 +540,7 @@ bool wahba_update(RotationData* rd, BallData* ball_data) {
         wahba_rebuild_sums(rd);
     }
 
-    if (rd->wahba_count < WAHBA_FIT_SAMPLES || rd->wahba_since_fit < WAHBA_FIT_INTERVAL) {
+    if (rd->wahba_count < WAHBA_MIN_SAMPLES || rd->wahba_since_fit < WAHBA_FIT_INTERVAL) {
         return false;
     }
     rd->wahba_since_fit = 0;
@@ -526,12 +548,22 @@ bool wahba_update(RotationData* rd, BallData* ball_data) {
     return true;
 }
 
-bool wahba_compensate_tilt(const RotationData* rd, float* thetax, float* thetay) {
+bool wahba_compensate_tilt(RotationData* rd, float* thetax, float* thetay) {
 #if WAHBA_USE_IN_CONTROL
-    if (rd->fit_status != WAHBA_OK) {
-        return false;
+    //Target = latest converged fit. With no valid fit (not ready, not converged, failed, NaN) the applied values are
+    //simply held, so the command stays continuous.
+    float tx = rd->ms_applied_x;
+    float ty = rd->ms_applied_y;
+    if (rd->fit_status == WAHBA_OK && rd->msx == rd->msx && rd->msy == rd->msy) {
+        tx = rd->msx;
+        ty = rd->msy;
     }
-    if (!(fabsf(rd->msx) <= WAHBA_MS_MAX) || !(fabsf(rd->msy) <= WAHBA_MS_MAX)) { //Also rejects NaN
+
+    //Slew-limit the applied values
+    rd->ms_applied_x += constrain(tx - rd->ms_applied_x, -WAHBA_MS_SLEW, WAHBA_MS_SLEW);
+    rd->ms_applied_y += constrain(ty - rd->ms_applied_y, -WAHBA_MS_SLEW, WAHBA_MS_SLEW);
+
+    if (rd->ms_applied_x == 0.0f && rd->ms_applied_y == 0.0f) {
         return false;
     }
 
@@ -544,7 +576,7 @@ bool wahba_compensate_tilt(const RotationData* rd, float* thetax, float* thetay)
 
     //w = R^T n_des (dot with each column of R)
     MsFrame f;
-    ms_frame(rd->msx, rd->msy, &f);
+    ms_frame(rd->ms_applied_x, rd->ms_applied_y, &f);
     float w[3];
     for (int k = 0; k < 3; k++) {
         w[k] = f.R[k][0]*n_des[0] + f.R[k][1]*n_des[1] + f.R[k][2]*n_des[2];

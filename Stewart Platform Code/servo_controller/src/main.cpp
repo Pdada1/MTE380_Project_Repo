@@ -123,14 +123,14 @@ void loop() {
             wahba_update(&rotationData, &ballData);
 
             // t, msx, msy, theta0, combined R^2, rms residual, iterations, status (0 not ready, 1 ok, 2 not converged, 3 failed)
-            // Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);  Serial.print(' ');
-            // Serial.print(rotationData.msx, 6);              Serial.print(' ');
-            // Serial.print(rotationData.msy, 6);              Serial.print(' ');
+            Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);  Serial.print(' ');
+            Serial.print(rotationData.msx, 6);              Serial.print(' ');
+            Serial.print(rotationData.msy, 6);              Serial.print(' ');
             // // Serial.print(rotationData.r2, 6);               Serial.print(' ');
             // // Serial.print(rotationData.rms, 6);              Serial.print(' ');
             // // Serial.print(rotationData.fit_iters);           Serial.print(' ');
-            // // Serial.print((int)rotationData.fit_status);
-            // Serial.println();
+            Serial.print((int)rotationData.fit_status);
+            Serial.println();
 
             // //Raw data in the python tool's 5-column format: t, ax, ay, -sin(thetax_shifted), -sin(thetay_shifted)
             // Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);              Serial.print(' ');

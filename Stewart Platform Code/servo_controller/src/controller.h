@@ -12,6 +12,11 @@
 #define CONTROLLER_DELAY 0.55
 #define SAMPLE_RATE_APPROX 0.045
 
+//1: when the tilt history starts (power-up, or after a camera dropout) assume the platform sat at its last commanded tilt
+//(level at power-up) for the whole delay window, so delay-shifted tilts are available from the very first sample.
+//0: wait CONTROLLER_DELAY (about 17 samples) for real history before the Wahba fit can start.
+#define SEED_TILT_HISTORY 1
+
 //Tilt history kept for looking back CONTROLLER_DELAY (needs to cover at least CONTROLLER_DELAY_MAX)
 #define FIT_HISTORY_SAMPLES ((int)(CONTROLLER_DELAY_MAX/SAMPLE_RATE_APPROX) + 2)
 
@@ -20,7 +25,10 @@
 //------------------------------------------------------------
 #define WAHBA_AZ_CONST 5.89f      //"az constant" c in az = (c - sqrt(c^2 - 4(ax^2+ay^2)))/2
 #define WAHBA_FIT_SAMPLES 20      //"Number of samples" used in each fit. Each costs 32 bytes of RAM.
-#define WAHBA_SAMPLE_SPACING 2    //"Sample spacing": only every Nth controller sample is stored for fitting
+#define WAHBA_SAMPLE_SPACING 2    //"Sample spacing": only every Nth controller sample is stored for fitting once the buffer is full
+#define WAHBA_FILL_SPACING 1      //Spacing used while the buffer is still filling (1 = store every sample so the first fits come sooner)
+#define WAHBA_MIN_SAMPLES 6       //First fit as soon as this many samples are stored (<= WAHBA_FIT_SAMPLES); the fit then
+                                  //keeps refining as the buffer fills up to WAHBA_FIT_SAMPLES.
 #define WAHBA_FIT_INTERVAL 1      //Once the buffer is full, refit after this many newly stored samples (1 = every stored sample, i.e. every other real sample)
 #define WAHBA_MAX_ITER 20         //"Max iterations" of the Gauss-Newton solver
 #define WAHBA_STEP_TOL 1e-5f      //Converged when both msx and msy change by less than this in an iteration
@@ -29,7 +37,7 @@
 
 //Feeding the fit into the control
 #define WAHBA_USE_IN_CONTROL 1    //1: correct the PID tilt command with the fitted msx, msy. 0: log only.
-#define WAHBA_MS_MAX 0.2f         //Sanity limit: a fit with |msx| or |msy| above this (about 11 deg) is not applied
+#define WAHBA_MS_SLEW 0.05f      //Largest change of the applied msx / msy per controller sample (0.002 = about 0.11 deg per sample)
 
 //Converts acc_av() output to the units the az constant is expressed in (same scaling as the old debug print)
 #ifndef ACC_SCALE
@@ -59,6 +67,8 @@ struct RotationData { //Struct to keep track of tilt history and shifted tilt
     float msx = 0;
     float msy = 0;
     float theta0 = 0;
+    float ms_applied_x = 0; //msx / msy actually used to correct the tilt command: the fit, clamped and slew-limited so the command never steps
+    float ms_applied_y = 0;
     float thetax_shifted = 0; //Delay-compensated tilt of the newest sample [deg]
     float thetay_shifted = 0;
     bool shifted_valid = false; //True once the shifted tilt was interpolated from real history. Cleared by a refill.
@@ -95,7 +105,9 @@ bool wahba_update(RotationData* rd, BallData* ball_data);
 
 //Corrects a desired tilt (thetax, thetay in deg, from the PID) for the fitted rotation R(msx, msy): the plane normal
 //actually produced by a command is R * nps(command), so the command is chosen as nps = R^T * n_desired.
-//Leaves the tilt untouched until the fit is valid. Returns true if the correction was applied.
-bool wahba_compensate_tilt(const RotationData* rd, float* thetax, float* thetay);
+//The msx / msy used are ramped toward the latest converged fit at WAHBA_MS_SLEW per call, and
+//held when there is no valid fit, so the correction can never make the command jump. Call once per controller sample.
+//Returns true if a non-zero correction was applied.
+bool wahba_compensate_tilt(RotationData* rd, float* thetax, float* thetay);
 
 #endif
