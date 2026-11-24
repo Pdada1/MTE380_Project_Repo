@@ -1,7 +1,10 @@
 #include "camera_modes.h"
 #include "freq_response_servo.h"
+#include "controller.h"
+#include "autotune.h"
 
 static constexpr uint32_t SWEEP_STEP_MS = 100;
+
 
 // Commands can arrive before the first tracking packet supplies servo channels.
 static void set_command_channels(const CameraPacket& packet, BallData& ballData) {
@@ -45,6 +48,7 @@ static void run_sweep(BallData& ballData) {
 }
 
 void handle_camera_command(const CameraPacket& packet, BallData& ballData) {
+
     // Tracking and ball loss are handled by the camera path.
     switch (packet.status) {
         case PacketStatus::Level:
@@ -57,6 +61,8 @@ void handle_camera_command(const CameraPacket& packet, BallData& ballData) {
             break;
         case PacketStatus::ServoTrim:
             apply_servo_trims(packet, ballData);
+            autotune_set_rise_time(packet.yr);     // trim packet: yr = desired rise time (ms)
+            autotune_set_overshoot(packet.kp);     // trim packet: kp = max overshoot (%)
             break;
         case PacketStatus::Autotune: {
             set_command_channels(packet, ballData);
@@ -77,3 +83,6 @@ void handle_camera_command(const CameraPacket& packet, BallData& ballData) {
             break;
     }
 }
+
+
+

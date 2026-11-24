@@ -2,6 +2,8 @@
 #include "camera_servo.h"
 #include "camera_modes.h"
 #include "controller.h"
+#include "autotune.h"
+
 
 BallData ballData; //Ball data to be fed to the controller (x,y,t,xr,yr)
 uint16_t num_samples = 0;
@@ -18,10 +20,12 @@ void loop() {
         camera_read_data(&ballData);
         num_samples++;
 
+        bool use_autotune = autotune_routine(&ballData);
+
         //Only run controller after ballData buffers have filled
         if (num_samples >= CAMERA_SAMPLES) {
-            float thetax = pid_get_xtilt(&ballData);
-            float thetay = pid_get_ytilt(&ballData);
+            float thetax = pid_get_xtilt(&ballData, use_autotune);
+            float thetay = pid_get_ytilt(&ballData, use_autotune);
             setTilt(thetax, thetay, &ballData);
             
             // Serial.print(thetax);

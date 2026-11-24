@@ -7,6 +7,13 @@
 float int_ex = 0;
 float int_ey = 0;
 
+// @MM autotune PID params
+float kp_a = 4; //todo find a good conservative value to have as an initial proportion constant
+float ki_a = 0; // Have some derivative and integral action to improve rise_time convergence 
+float kd_a = 0;
+
+
+
 float e_av(BallData* ball_data, char axis) {
     float* x;
     float* xr;
@@ -84,19 +91,77 @@ float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 
     }
 }
 
-float pid_get_tilt(BallData* ball_data, char axis) { //Gets tilt for axis 'x' or 'y'
+float pid_get_tilt(BallData* ball_data, char axis, bool autotune) { //Gets tilt for axis 'x' or 'y'
     float e = e_av(ball_data, axis);
     float int_e = inte(ball_data, axis);
     float d_e = de_av(ball_data, axis);
+    float u;
 
-    float u = e*ball_data->kp + int_e*ball_data->ki + d_e*ball_data->kd;
+    if (autotune) 
+        u = e * kp_a + int_e * ki_a + d_e * kd_a;
+    else 
+        u = e*ball_data->kp + int_e*ball_data->ki + d_e*ball_data->kd;
+    
+
+
+
+    // Debug every 10 control updates
+    // static int count = 0;
+    // if (axis == 'x' && ++count >= 10) {
+    //     count = 0;
+
+    //     Serial.print("P: ");
+    //     Serial.print(p, 3);
+    //     Serial.print(" D: ");
+    //     Serial.print(d, 3);
+    //     Serial.print(" U: ");
+    //     Serial.println(u, 3);
+    // }
+
     return u;
 }
 
-float pid_get_xtilt(BallData* ball_data) {
-    return pid_get_tilt(ball_data, 'x');
+
+float pid_get_xtilt(BallData* ball_data, bool autotune) {
+    return pid_get_tilt(ball_data, 'x', autotune);
 }
 
-float pid_get_ytilt(BallData* ball_data) {
-    return pid_get_tilt(ball_data, 'y');
+float pid_get_ytilt(BallData* ball_data, bool autotune) {
+    return pid_get_tilt(ball_data, 'y', autotune);
 }
+
+
+
+void autotune_scale_kp(float scale) { 
+    kp_a *= scale; 
+    kp_a = constrain(kp_a, KP_MIN, KP_MAX);
+}
+
+float autotune_get_kp() { 
+    return kp_a; 
+}
+
+// True when kp_a is pinned at a limit and `ratio` is asking for more in that direction.
+// (ratio > 1: ball too slow, wants more kp. ratio < 1: too fast, wants less.)
+bool autotune_kp_saturated(float ratio) {
+    return (ratio > 1.0f && kp_a >= KP_MAX - 1e-3f) ||
+           (ratio < 1.0f && kp_a <= KP_MIN + 1e-3f);
+}
+
+
+void autotune_set_kd(float kd) { 
+    kd_a = constrain(kd, KD_MIN, KD_MAX);
+}
+
+float autotune_get_kd() { 
+    return kd_a; 
+}
+
+bool autotune_kd_at_max() { 
+    return kd_a >= KD_MAX - 1e-3f; 
+}
+
+float autotune_get_ki(){
+    return ki_a;
+}
+    

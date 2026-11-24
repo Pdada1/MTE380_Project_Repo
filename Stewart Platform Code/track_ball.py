@@ -18,7 +18,7 @@ SYNC = bytes((0x0B, 0x00, 0x0B))
 PACKET = struct.Struct("<3sB3B4fI3f")
 ARDUINO_SERIAL_PORT = "COM6"
 BAUD_RATE = 115200
-DEFAULT_GAINS = (7.0, 0.2, 4.8)
+DEFAULT_GAINS = (6.0, 0.5, 4.8)
 TRAJECTORY_GAINS = (6.0, 1.8, 4.5)  # Kp, Ki, Kd for circle tracking
 
 TRAJECTORY_SPEED = 0.5
@@ -34,6 +34,12 @@ TRIM_PINS = SERVO_PINS
 TRIM_LIMIT = 10
 
 
+# @MM
+DEFAULT_RISE_TIME_MS = 1000
+RISE_TIME_LIMITS = (400, 1000) # ms, accepted entered range in the GUI
+DEFAULT_OVERSHOOT_PCT = 10
+OVERSHOOT_LIMITS = (5, 50) # percent; the firmware ignores entered values outside this
+
 class Status(IntEnum):
     """Match the command and tracking status values used by the Arduino."""
     BALL_LOST = 0
@@ -43,6 +49,7 @@ class Status(IntEnum):
     AUTOLEVEL = 4
     SWEEP = 5
     SERVO_TRIM = 6
+    AUTOTUNE_MM = 8
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
@@ -249,6 +256,8 @@ class Tracker:
         self.history = History()
         # Store editable gains in tenths to match the GUI step size.
         self.trajectory_gains = [round(value * 10) for value in TRAJECTORY_GAINS]
+        self.rise_time_ms = DEFAULT_RISE_TIME_MS # @MM
+        self.max_overshoot_pct = DEFAULT_OVERSHOOT_PCT # @MM
 
     def active_gains(self, manual_gains):
         """Return the editable gain set for the current tracking mode."""
@@ -284,15 +293,17 @@ class Tracker:
         ball = (0.0, 0.0)
         target = self.platform.normalize(self.target) if self.platform is not None else (0.0, 0.0)
         status = Status.BALL_LOST
-        if isinstance(action, Status):
+        if isinstance(action, Status) and action != Status.AUTOTUNE_MM:
             status = action
         elif action in ("ball", "platform"):
             status = Status.LEVEL
         elif (self.platform is not None and self.detection is not None
-              and now - self.frame_time <= 0.25):
-            status = Status.TRACKING
+            and now - self.frame_time <= 0.25):
+            status = Status.AUTOTUNE_MM if action == Status.AUTOTUNE_MM else Status.TRACKING # @MM
             ball = self.platform.normalize(self.detection[0])
-        trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims, 0.0, 0, *DEFAULT_GAINS)
+        trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims,
+                   float(self.rise_time_ms), 0,
+                   float(self.max_overshoot_pct), 0.0, 0.0) # @MM
         # Each button press gets its own ID, even if it selects the same mode again.
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
         timestamp = mode_request_id if status == Status.SWEEP else frame_ms
