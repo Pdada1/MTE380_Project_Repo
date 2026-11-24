@@ -47,8 +47,8 @@ def sample_ball_color(frame, detector, x, y):
     return BallDetector(lower, upper, MIN_BALL_RADIUS)
 
 
-def find_platform(frame):
-    """Detect the three RGB squares and fit the platform circle."""
+def find_platform(frame, missing=None):
+    """Fit the circle using RGB candidates that form a plausible triangle."""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     ranges = [
@@ -57,7 +57,8 @@ def find_platform(frame):
         [(95, 70, 50), (135, 255, 255)],   # Blue
     ]
 
-    points = []
+    candidates_by_color = []
+    scale = frame.shape[1] / 640
 
     for i, (lower, upper) in enumerate(ranges):
         mask = cv2.inRange(hsv, lower, upper)
@@ -75,31 +76,42 @@ def find_platform(frame):
             area = cv2.contourArea(contour)
             (cx, cy), radius = cv2.minEnclosingCircle(contour)
 
-            # Look for small colored squares, not large reflections
-            if not 10 <= area <= 250 or not 2 <= radius <= 12:
+            # Keep the size limits close to the original 640 px thresholds.
+            if not 10 * scale**2 <= area <= 320 * scale**2 or not 2 * scale <= radius <= 14 * scale:
                 continue
 
-            x, y, w, h = cv2.boundingRect(contour)
+            _, (w, h), _ = cv2.minAreaRect(contour)
 
-            # Reject long, thin objects
-            if not 0.5 <= w / h <= 2.0:
+            # Measure shape along the marker's axes, even when rotated.
+            if min(w, h) < 0.5 * max(w, h):
                 continue
 
             candidates.append((area, (int(cx), int(cy))))
 
         if not candidates:
-            return
+            if missing is not None:
+                missing.append(("Red", "Green", "Blue")[i])
+        candidates_by_color.append(sorted(candidates, reverse=True)[:8])
 
-        points.append(max(candidates)[1])
-
-    # Reject points that cannot define the expected platform geometry
-    distances = [
-        math.dist(points[i], points[(i + 1) % 3])
-        for i in range(3)
-    ]
-
-    if min(distances) < 50 or max(distances) > 1.8 * min(distances):
+    if not all(candidates_by_color):
         return
+
+    best = None
+    for red in candidates_by_color[0]:
+        for green in candidates_by_color[1]:
+            rg = math.dist(red[1], green[1])
+            for blue in candidates_by_color[2]:
+                distances = (rg, math.dist(green[1], blue[1]), math.dist(blue[1], red[1]))
+                shortest = min(distances)
+                if shortest < 50 * scale or max(distances) > 1.8 * shortest:
+                    continue
+                score = red[0] + green[0] + blue[0]
+                if best is None or score > best[0]:
+                    best = score, [red[1], green[1], blue[1]]
+
+    if best is None:
+        return
+    _, points = best
 
     try:
         origin, radius = fit_circle(points)

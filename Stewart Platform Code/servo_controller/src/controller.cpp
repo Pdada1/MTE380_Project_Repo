@@ -2,7 +2,7 @@
 #include "LinearFit.h" //SimpleRegression library
 
 #define POS_SAMPLES 1
-#define VEL_SAMPLES 2
+#define VEL_SAMPLES 3
 
 float int_ex = 0;
 float int_ey = 0;
@@ -46,6 +46,9 @@ float de_av(BallData* ball_data, char axis) {
     
     // Generate error/time arrays relative to the first velocity sample.
     const uint32_t start_ms = ball_data->frame_ms[CAMERA_SAMPLES-VEL_SAMPLES];
+    if (ball_data->frame_ms[CAMERA_SAMPLES-1] == start_ms) {
+        return 0.0f; // Buffered frames can be handled in the same Arduino millisecond.
+    }
     float ex[VEL_SAMPLES] = {0};
     float t[VEL_SAMPLES] = {0};
     for (int i=0; i<VEL_SAMPLES; i++) {

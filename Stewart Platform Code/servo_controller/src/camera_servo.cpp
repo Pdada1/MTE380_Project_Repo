@@ -67,7 +67,7 @@ bool camera_data_ready() {
                 return false;
             }
 
-            // Python can resend the same frame. Use it only once for PID timing.
+            // Use the Python timestamp only to reject resends of the same frame.
             if (status == PacketStatus::Tracking && (!have_tracking_frame || latest_camera_packet.timestamp != last_frame_ms)) {
                 last_frame_ms = latest_camera_packet.timestamp;
                 have_tracking_frame = true;
@@ -97,7 +97,7 @@ void camera_read_data(BallData* ball_data) { //Assumes camera data is ready
         ball_data->y[CAMERA_SAMPLES-1] = latest_camera_packet.y;
         ball_data->xr[CAMERA_SAMPLES-1] = latest_camera_packet.xr;
         ball_data->yr[CAMERA_SAMPLES-1] = latest_camera_packet.yr;
-        ball_data->frame_ms[CAMERA_SAMPLES-1] = latest_camera_packet.timestamp;
+        ball_data->frame_ms[CAMERA_SAMPLES-1] = millis();
         ball_data->kp = latest_camera_packet.kp;
         ball_data->ki = latest_camera_packet.ki;
         ball_data->kd = latest_camera_packet.kd;
