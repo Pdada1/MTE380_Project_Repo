@@ -156,7 +156,7 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.bind("<Escape>", lambda event: self.cancel_action())
         self.root.bind("c", lambda event: self.center_target())
-        self.root.bind("<space>", lambda event: self.hardware.proceed.set())
+        self.root.bind("g", lambda event: self.hardware.proceed.set())
         self.root.bind("r", lambda event: self.redo_frequency())
         self.fps_count = 0
         self.fps_t = time.monotonic()
