@@ -520,7 +520,9 @@ class App:
         self.tracker.history.freq = self.logger.run[1] if self.logger.run is not None else None
         if self.tracker.process_frame(now, frame, detector):
             self.set_action(None, "Trajectory complete.")
-        self.logger.on_ball(now, self.tracker.ball)
+        if self.logger.on_ball(now, self.tracker.ball):
+            # The ball is about to leave the platform during a run: stop the sweep.
+            self.hardware.abort.set()
         self.fps_count += 1
         if now - self.fps_t >= 2:
             print(f"{self.fps_count / (now - self.fps_t):.1f} frames/s processed", flush=True)
@@ -576,10 +578,13 @@ class App:
                 else:
                     self.show_autotune_result()
             if line == "SWEEP_ABORTED":
+                stopped = "Frequency sweep stopped."
+                if self.logger.abort_message:
+                    stopped += " " + self.logger.abort_message + " Partial data saved as *_diag_aborted.csv."
                 if self.action in SWEEP_MODES:
-                    self.set_action(None, "Frequency sweep stopped.")
+                    self.set_action(None, stopped)
                 else:
-                    self.notice("Frequency sweep stopped.")
+                    self.notice(stopped)
             if line.startswith("Start Frequency Run"):
                 self.notice(f"{line} Space = go, R = repeat previous.")
 

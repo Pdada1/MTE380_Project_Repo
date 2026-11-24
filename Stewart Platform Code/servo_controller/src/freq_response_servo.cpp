@@ -10,7 +10,7 @@ Reset the platform to level and wait for the computer to tell it to continue?
 #include "controller.h"
 
 #define MIN_TSTEP 0.05f
-#define MAX_ANGLE_DEVIATION 5.0f
+#define MAX_ANGLE_DEVIATION 3.0f
 #define MAX_FREQ 1.5f       // Hz
 #define MIN_FREQ 0.5f       // Hz
 #define MIN_SINGLE_FREQ 0.1f // Hz, limits for a single requested run (keep in sync with run.py)
@@ -22,7 +22,7 @@ Reset the platform to level and wait for the computer to tell it to continue?
 #define SERVO_1_CH 10
 #define SERVO_2_CH 9
 
-#define BALL_EXTENT_MM 25.0f
+#define BALL_EXTENT_MM 15.0f
 #define G_MM_S2 9810.0f
 #define MIN_AMP_DEG 1.0f
 
