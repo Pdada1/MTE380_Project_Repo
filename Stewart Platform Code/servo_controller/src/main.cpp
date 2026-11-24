@@ -77,6 +77,8 @@ void loop() {
         float now = ballData.t[CAMERA_SAMPLES-1];
         if (now - last_t > 0.3f) {            // dropout: buffers hold stale data
             num_samples = 1;                  // wait for CAMERA_SAMPLES fresh samples
+            rotationData.num_valid = 0;       // tilt history is stale too: force a refill
+            rotationData.shifted_valid = false;
         }
         last_t = now;
         num_samples++;
@@ -87,6 +89,13 @@ void loop() {
             float thetay = pid_get_ytilt(&ballData, 0.0f);
             thetax = constrain(thetax, -PLANE_ANGLE_MAX, PLANE_ANGLE_MAX);
             thetay = constrain(thetay, -PLANE_ANGLE_MAX, PLANE_ANGLE_MAX);
+
+            //Correct the desired tilt for the fitted msx, msy (no-op until the fit is valid), then limit again.
+            //The corrected value is what is actually commanded, so it is also what goes into the tilt history / fit.
+            if (wahba_compensate_tilt(&rotationData, &thetax, &thetay)) {
+                thetax = constrain(thetax, -PLANE_ANGLE_MAX, PLANE_ANGLE_MAX);
+                thetay = constrain(thetay, -PLANE_ANGLE_MAX, PLANE_ANGLE_MAX);
+            }
             setTilt(thetax, thetay, &ballData);
             update_shifted_tilt(&rotationData, ballData.t[CAMERA_SAMPLES - 1], thetax, thetay);
 
@@ -110,20 +119,25 @@ void loop() {
             // Serial.print(-sin(thetay*PI/180), 3);
             // Serial.println(' ');
 
-            Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);
-            Serial.print(' ');
-            float accx = acc_av(&ballData, 'x');
-            float accy = acc_av(&ballData, 'y');
-            float acc_norm = sqrt(accx*accx + accy*accy);
-            Serial.print(accx/acc_norm, 6); // m/s^2
-            Serial.print(' ');
-            Serial.print(accy/acc_norm, 6);
-            Serial.print(' ');
-            //Shifted thetax and thetay
-            Serial.print(-sin(rotationData.thetax_shifted*PI/180), 3);
-            Serial.print(' ');
-            Serial.print(-sin(rotationData.thetay_shifted*PI/180), 3);
-            Serial.println(' ');
+            //Store (acceleration, delay-shifted tilt) and refit msx, msy with Wahba's problem (theta0 = 0)
+            wahba_update(&rotationData, &ballData);
+
+            // t, msx, msy, theta0, combined R^2, rms residual, iterations, status (0 not ready, 1 ok, 2 not converged, 3 failed)
+            // Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);  Serial.print(' ');
+            // Serial.print(rotationData.msx, 6);              Serial.print(' ');
+            // Serial.print(rotationData.msy, 6);              Serial.print(' ');
+            // // Serial.print(rotationData.r2, 6);               Serial.print(' ');
+            // // Serial.print(rotationData.rms, 6);              Serial.print(' ');
+            // // Serial.print(rotationData.fit_iters);           Serial.print(' ');
+            // // Serial.print((int)rotationData.fit_status);
+            // Serial.println();
+
+            // //Raw data in the python tool's 5-column format: t, ax, ay, -sin(thetax_shifted), -sin(thetay_shifted)
+            // Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);              Serial.print(' ');
+            // Serial.print(acc_av(&ballData, 'x') * ACC_SCALE, 4);        Serial.print(' ');
+            // Serial.print(acc_av(&ballData, 'y') * ACC_SCALE, 4);        Serial.print(' ');
+            // Serial.print(-sin(rotationData.thetax_shifted*PI/180), 4);  Serial.print(' ');
+            // Serial.println(-sin(rotationData.thetay_shifted*PI/180), 4);
 
             // Serial.print(ballData.t[CAMERA_SAMPLES-1], 3);              Serial.print(' ');
             // Serial.print(ballData.x[CAMERA_SAMPLES-1], 3);              Serial.print(' ');
