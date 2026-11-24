@@ -24,7 +24,7 @@ ACTIONS = (
     ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "start_mode", Status.AUTOTUNE),
     ("Autorotation Mode", "Track the ball independent of the platform orientation.", "start_mode", Status.AUTOROTATION),
     ("Autotilt Mode", "Track with automatic tilt compensation.", "start_mode", Status.AUTOTILT),
-    ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
+    ("Autolevel Platform", "Track the ball with the separate autolevel PID controller.", "start_mode", Status.AUTOLEVEL),
     ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
     ("Draw Circle", "Follow a circle starting at the ball.", "start_path", "circle"),
     ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),

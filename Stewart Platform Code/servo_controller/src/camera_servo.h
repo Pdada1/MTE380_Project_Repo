@@ -33,7 +33,7 @@
 
 #define SHIELD_ADDR 0x40
 
-#define CAMERA_SAMPLES 3
+#define CAMERA_SAMPLES 12
 
 // Match the status byte sent by track_ball.py.
 enum class PacketStatus : uint8_t {

@@ -48,6 +48,7 @@ bool camera_data_ready() {
     static uint8_t sync[3] = {};
     static bool have_tracking_frame = false;
     static uint32_t last_frame_ms = 0;
+    static PacketStatus last_frame_status = PacketStatus::BallLost;
 
     // Keep enough bytes buffered for the payload after the last sync byte.
     while (!command_pending && Serial.available() > (int)sizeof(CameraPacket)) {
@@ -62,14 +63,16 @@ bool camera_data_ready() {
 
             // Stop draining here so the command runs before any later tracking packet.
             const PacketStatus status = latest_camera_packet.status;
-            if (status != PacketStatus::Tracking && status != PacketStatus::BallLost) {
+            const bool tracking_frame = status == PacketStatus::Tracking || status == PacketStatus::Autolevel;
+            if (!tracking_frame && status != PacketStatus::BallLost) {
                 command_pending = true;
                 return false;
             }
 
             // Python can resend the same frame. Use it only once for PID timing.
-            if (status == PacketStatus::Tracking && (!have_tracking_frame || latest_camera_packet.timestamp != last_frame_ms)) {
+            if (tracking_frame && (!have_tracking_frame || status != last_frame_status || latest_camera_packet.timestamp != last_frame_ms)) {
                 last_frame_ms = latest_camera_packet.timestamp;
+                last_frame_status = status;
                 have_tracking_frame = true;
                 return true;
             }

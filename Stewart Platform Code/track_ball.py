@@ -16,7 +16,7 @@ from helper import SERVO_PINS, open_camera
 SYNC = bytes((0x0B, 0x00, 0x0B))
 # Wire fields in order: sync, status, pins, ball XY, target XY, timestamp, PID gains.
 PACKET = struct.Struct("<3sB3B4fI3f")
-ARDUINO_SERIAL_PORT = "COM6"
+ARDUINO_SERIAL_PORT = "COM5"
 BAUD_RATE = 115200
 DEFAULT_GAINS = (6.0, 0.1, 4.8)
 TRAJECTORY_GAINS = (6.0, 1.8, 4.5)  # Kp, Ki, Kd for circle tracking
@@ -49,7 +49,7 @@ class Status(IntEnum):
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
 # they act like a latch. All other modes spam packets with their Status type
-HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE, Status.AUTOLEVEL)
+HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE)
 
 
 def put_latest(queue, item):
@@ -296,7 +296,7 @@ class Tracker:
         ball = (0.0, 0.0)
         target = self.platform.normalize(self.target) if self.platform is not None else (0.0, 0.0)
         status = Status.BALL_LOST
-        if isinstance(action, Status) and action not in (Status.AUTOROTATION, Status.AUTOTILT):
+        if isinstance(action, Status) and action not in (Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL):
             status = action
         elif action == "platform" and identify_pin is not None:
             status = Status.IDENTIFY_SERVOS
@@ -307,7 +307,7 @@ class Tracker:
                 pins = mapped_pins
         elif (self.platform is not None and self.detection is not None
               and now - self.frame_time <= 0.25):
-            status = action if action in (Status.AUTOROTATION, Status.AUTOTILT) else Status.TRACKING
+            status = action if action in (Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL) else Status.TRACKING
             ball = self.platform.normalize(self.detection[0])
         level_pins = mapped_pins or (self.platform.pins if self.platform is not None else SERVO_PINS)
         trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *level_pins, *trims, 0.0, 0, *DEFAULT_GAINS)
@@ -315,7 +315,7 @@ class Tracker:
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
         timestamp = mode_request_id if status == Status.SWEEP else frame_ms
         tracking_gains = gains
-        if status in (Status.TRACKING, Status.AUTOROTATION, Status.AUTOTILT):
+        if status in (Status.TRACKING, Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL):
             tracking_gains = tuple(value / 10 for value in self.active_gains(manual_gains))
         command = PACKET.pack(SYNC, status, *pins, *ball, *target, timestamp, *tracking_gains)
         level = PACKET.pack(SYNC, Status.LEVEL, *level_pins, 0, 0, 0, 0, frame_ms, *gains)
