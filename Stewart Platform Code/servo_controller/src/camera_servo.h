@@ -46,6 +46,7 @@ enum class PacketStatus : uint8_t {
     ServoTrim = 6,
     Autorotation = 7,
     IdentifyServos = 11,
+    Autotilt = 12,
 };
 
 // Payload of Python's <3sB3B4fI3f packet, after the three sync bytes.

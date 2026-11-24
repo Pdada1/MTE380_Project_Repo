@@ -23,6 +23,7 @@ ACTIONS = (
     ("Calibrate Ball", "Sample the ball color in the camera view.", "start_ball_calibration"),
     ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "start_mode", Status.AUTOTUNE),
     ("Autorotation Mode", "Track the ball independent of the platform orientation.", "start_mode", Status.AUTOROTATION),
+    ("Autotilt Mode", "Track with automatic tilt compensation.", "start_mode", Status.AUTOTILT),
     ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
     ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
     ("Draw Circle", "Follow a circle starting at the ball.", "start_path", "circle"),
@@ -79,6 +80,7 @@ class App:
         self.config = {}
         self.tracker = Tracker()
         self.action = None
+        self.tracking_mode = Status.TRACKING
         self.polygon_points = []
         self.candidate = None
         self.gains = [round(value * 10) for value in DEFAULT_GAINS]
@@ -155,6 +157,9 @@ class App:
         self.reset_button = ttk.Button(self.action_controls, text="Reset Samples", command=self.reset_candidate)
         self.go_button = ttk.Button(self.action_controls, text="Go", command=self.start_polygon)
         self.cancel_button = ttk.Button(self.action_controls, text="Cancel Action", command=self.cancel_action)
+
+        self.cancel_tracking_button = ttk.Button(self.action_controls,
+                                                 command=self.cancel_tracking_mode)
 
         controls = ttk.LabelFrame(middle, text="Controls", padding=8)
         controls.grid(row=3, column=0, sticky="ew")
@@ -378,9 +383,21 @@ class App:
         self.tracker.history.reset_derivatives()
         self.set_action(None, "Calibration saved. Click the camera view to set a target.")
 
+    def cancel_tracking_mode(self):
+        """Return to normal PID without interrupting the current action."""
+        self.tracking_mode = Status.TRACKING
+        self.cancel_tracking_button.pack_forget()
+
     def start_mode(self, mode):
         """Select a firmware mode and identify each new hold-level request."""
         message = MODE_LABELS[mode]
+        if mode in (Status.AUTOROTATION, Status.AUTOTILT):
+            self.tracking_mode = mode
+            name = "Autorotation" if mode == Status.AUTOROTATION else "Autotilt"
+            self.cancel_tracking_button.configure(text=f"Cancel {name}")
+            self.cancel_tracking_button.pack(side="right")
+            self.notice(f"{name} selected." if not self.preview else f"{name} selected (preview).")
+            return
         if mode in HOLD_LEVEL_MODES:
             self.mode_request_id = (self.mode_request_id + 1) & 0xFFFFFFFF
             message += " · holds level" if mode == Status.LEVEL else " · holds level afterward"
@@ -548,6 +565,9 @@ class App:
                 action = self.action
                 if action == "platform" and not self.identify_confirmed:
                     action = Status.BALL_LOST
+                elif not isinstance(action, Status) and action not in ("ball", "platform"):
+                    if self.tracking_mode != Status.TRACKING:
+                        action = self.tracking_mode
                 self.tracker.send_command(self.hardware, now, action, self.gains, self.trims, self.mode_request_id,
                                           self.identify_pin(), self.mapped_servo_pins())
             self.last_sent = now

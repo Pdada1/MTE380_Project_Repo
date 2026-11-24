@@ -44,6 +44,7 @@ class Status(IntEnum):
     SERVO_TRIM = 6
     AUTOROTATION = 7
     IDENTIFY_SERVOS = 11
+    AUTOTILT = 12
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
@@ -101,34 +102,44 @@ class Hardware:
         try:
             import serial
 
-            with serial.Serial(port_name, BAUD_RATE, write_timeout=0.1) as port:
-                # Give the Arduino time to reset after opening the serial port.
-                if self.stop.wait(2):
-                    return
-                self.messages.put(("serial", f"{port_name} connected"))
-                last_trim = None
-                last_mode_request = None
-                last_level = None
+            last_mode_request = None
+            while not self.stop.is_set():
                 try:
-                    while not self.stop.is_set():
+                    with serial.Serial(port_name, BAUD_RATE, write_timeout=0.1) as port:
+                        # Give the Arduino time to reset after opening the serial port.
+                        if self.stop.wait(2):
+                            return
+                        self.messages.put(("serial", f"{port_name} connected"))
+                        last_trim = None
+                        last_level = None
                         try:
-                            trim, command, last_level, mode_request = self.commands.get(timeout=0.05)
-                        except Empty:
-                            continue
-                        if trim != last_trim:
-                            port.write(trim)
-                            last_trim = trim
-                        # Deduplicate after sending so replacing a queued update can't lose the request.
-                        if mode_request is None or mode_request != last_mode_request:
-                            port.write(command)
-                            last_mode_request = mode_request
-                        if debug:
-                            output = port.read_all()
-                            if output:
-                                print(output.decode("ascii", errors="replace"), end="", flush=True)
-                finally:
-                    if last_level is not None:
-                        port.write(last_level)
+                            while not self.stop.is_set():
+                                try:
+                                    trim, command, last_level, mode_request = self.commands.get(timeout=0.05)
+                                except Empty:
+                                    continue
+                                if trim != last_trim:
+                                    port.write(trim)
+                                    last_trim = trim
+                                # Deduplicate after sending so replacing a queued update can't lose the request.
+                                if mode_request is None or mode_request != last_mode_request:
+                                    port.write(command)
+                                    last_mode_request = mode_request
+                                if debug:
+                                    output = port.read_all()
+                                    if output:
+                                        print(output.decode("ascii", errors="replace"), end="", flush=True)
+                        finally:
+                            if self.stop.is_set() and last_level is not None:
+                                port.write(last_level)
+                except serial.SerialTimeoutException:
+                    if self.stop.is_set():
+                        return
+                    # Reopen the port to clear a possibly partial packet.
+                    self.messages.put(("serial", f"{port_name} write timeout. Reconnecting..."))
+                    if last_mode_request is not None and last_mode_request[0] == Status.LEVEL:
+                        last_mode_request = None
+                    self.stop.wait(0.25)
         except Exception as error:
             self.messages.put(("serial", str(error)))
 
@@ -285,7 +296,7 @@ class Tracker:
         ball = (0.0, 0.0)
         target = self.platform.normalize(self.target) if self.platform is not None else (0.0, 0.0)
         status = Status.BALL_LOST
-        if isinstance(action, Status) and action != Status.AUTOROTATION:
+        if isinstance(action, Status) and action not in (Status.AUTOROTATION, Status.AUTOTILT):
             status = action
         elif action == "platform" and identify_pin is not None:
             status = Status.IDENTIFY_SERVOS
@@ -296,7 +307,7 @@ class Tracker:
                 pins = mapped_pins
         elif (self.platform is not None and self.detection is not None
               and now - self.frame_time <= 0.25):
-            status = Status.AUTOROTATION if action == Status.AUTOROTATION else Status.TRACKING
+            status = action if action in (Status.AUTOROTATION, Status.AUTOTILT) else Status.TRACKING
             ball = self.platform.normalize(self.detection[0])
         level_pins = mapped_pins or (self.platform.pins if self.platform is not None else SERVO_PINS)
         trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *level_pins, *trims, 0.0, 0, *DEFAULT_GAINS)
@@ -304,7 +315,7 @@ class Tracker:
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
         timestamp = mode_request_id if status == Status.SWEEP else frame_ms
         tracking_gains = gains
-        if status in (Status.TRACKING, Status.AUTOROTATION):
+        if status in (Status.TRACKING, Status.AUTOROTATION, Status.AUTOTILT):
             tracking_gains = tuple(value / 10 for value in self.active_gains(manual_gains))
         command = PACKET.pack(SYNC, status, *pins, *ball, *target, timestamp, *tracking_gains)
         level = PACKET.pack(SYNC, Status.LEVEL, *level_pins, 0, 0, 0, 0, frame_ms, *gains)
