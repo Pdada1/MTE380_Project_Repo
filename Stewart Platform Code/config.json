@@ -1,8 +1,8 @@
 {
   "camera": {
-    "index": 1,
-    "frame_width": 1280,
-    "frame_height": 720
+    "index": 0,
+    "frame_width": 640,
+    "frame_height": 480
   },
   "ball_detection": {
     "lower_hsv": [
@@ -19,34 +19,34 @@
   },
   "calibration": {
     "origin_px": [
-      572.1679186274764,
-      355.242518733203
+      295.4868087766045,
+      227.4785765979144
     ],
-    "platform_radius_px": 322.6853895306952,
+    "platform_radius_px": 216.3419566299671,
     "zero_degree_servo": 0
   },
   "servos": [
     {
       "index": 0,
       "point_px": [
-        480,
-        46
+        222,
+        24
       ],
       "pin": 0
     },
     {
       "index": 1,
       "point_px": [
-        354,
-        593
+        155,
+        392
       ],
       "pin": 2
     },
     {
       "index": 2,
       "point_px": [
-        887,
-        426
+        508,
+        268
       ],
       "pin": 1
     }
