@@ -16,7 +16,7 @@ Reset the platform to level and wait for the computer to tell it to continue?
 #define MIN_SINGLE_FREQ 0.1f // Hz, limits for a single requested run (keep in sync with run.py)
 #define MAX_SINGLE_FREQ 2.0f // Hz
 #define FREQ_INCREMENT 0.1f // Hz
-#define NUM_OSCILLATIONS 5
+#define NUM_OSCILLATIONS 10
 
 #define SERVO_0_CH 8
 #define SERVO_1_CH 10
