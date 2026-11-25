@@ -19,11 +19,11 @@ SYNC = bytes((0x0B, 0x00, 0x0B))
 PACKET = struct.Struct("<3sB3B4fI3f")
 ARDUINO_SERIAL_PORT = "COM6"
 BAUD_RATE = 115200
-DEFAULT_GAINS = (6.0, 1.0, 4.3)
-TRAJECTORY_GAINS = (6.0, 1.2, 4.8)  # Kp, Ki, Kd for circle and polygon tracking
+DEFAULT_GAINS = (6.0, 1.0, 4.7)
+TRAJECTORY_GAINS = (6.0, 0.8, 4.8)  # Kp, Ki, Kd for circle and polygon tracking
 
 # Speeds are in platform radii per second. Errors are fractions of the radius.
-CIRCLE_SPEED = 1.0
+CIRCLE_SPEED = 0.35
 CIRCLE_SLOW_ERROR = 0.15
 CIRCLE_PAUSE_ERROR = 0.40
 CIRCLE_POINTS = 72

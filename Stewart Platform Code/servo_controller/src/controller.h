@@ -3,7 +3,7 @@
  
 #include "camera_servo.h"
 
-#define I_LIMIT 1.35
+#define I_LIMIT 1.30
 
 // Autotuning limits
 #define KD_MIN 0

@@ -4,7 +4,7 @@
 #define POS_SAMPLES 1
 #define VEL_SAMPLES 2
 
-static constexpr float POSITION_DEADBAND_MM = 15.0f;
+static constexpr float POSITION_DEADBAND_MM = 17.0f;
 static constexpr float POSITION_DEADBAND = POSITION_DEADBAND_MM / S;
 static constexpr float PROPORTIONAL_DEADBAND = POSITION_DEADBAND * (2.0f / 3.0f);
 static constexpr uint32_t TRACKING_GAP_MS = 250;

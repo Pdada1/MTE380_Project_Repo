@@ -7,7 +7,7 @@ class CircleFeedforward:
     RAMP_SECONDS = 0.5
     PLATFORM_RADIUS_M = 0.14  # Match the controller's nominal distance scale.
     ROLLING_ACCEL_M_S2 = 5.89  # Small-angle acceleration per radian for a rolling sphere.
-    CENTRIPETAL_GAIN = 6.4  # Factor to increase centripetal acceleration for stronger circular motion
+    CENTRIPETAL_GAIN = 4.0  # Factor to increase centripetal acceleration for stronger circular motion
     MAX_TARGET_OFFSET = 0.20  # Fraction of the platform radius.
     MAX_VELOCITY_OFFSET = 0.25  # Bound the tangential offset when Kp is small.
 
