@@ -19,11 +19,11 @@ SYNC = bytes((0x0B, 0x00, 0x0B))
 PACKET = struct.Struct("<3sB3B4fI3f")
 ARDUINO_SERIAL_PORT = "COM6"
 BAUD_RATE = 115200
-DEFAULT_GAINS = (5.0, 1.6, 4.0)
-TRAJECTORY_GAINS = (7.5, 0.6, 5.0)  # Kp, Ki, Kd for circle and polygon tracking
+DEFAULT_GAINS = (6.0, 1.0, 4.3)
+TRAJECTORY_GAINS = (6.0, 1.2, 4.3)  # Kp, Ki, Kd for circle and polygon tracking
 
 # Speeds are in platform radii per second. Errors are fractions of the radius.
-CIRCLE_SPEED = 0.15
+CIRCLE_SPEED = 0.35
 CIRCLE_SLOW_ERROR = 0.10
 CIRCLE_PAUSE_ERROR = 0.40
 CIRCLE_POINTS = 72
@@ -32,7 +32,7 @@ CIRCLE_PLATFORM_MARGIN = 0.10
 POLYGON_VERTEX_TOLERANCE = 0.10
 
 HISTORY_SECONDS = 30
-TRIM_LIMIT = 10
+TRIM_LIMIT = 60
 
 
 # @MM
@@ -58,6 +58,8 @@ class Status(IntEnum):
     FREQ_RUN = 10   # one frequency on one axis: ball x = axis code, ball y = frequency in Hz
     IDENTIFY_SERVOS = 11
     AUTOTILT = 12
+    FIXED_TARGET = 13
+    CIRCLE_TRACKING = 14
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
@@ -89,6 +91,9 @@ class Hardware:
         self.frames = Queue(maxsize=1)
         self.commands = Queue(maxsize=1)
         self.messages = Queue()
+        if debug and not preview:
+            self.serial_output = Queue(maxsize=16)
+            Thread(target=self.print_serial_output, daemon=True).start()
         self.camera_thread = Thread(target=self.capture, daemon=True)
         self.camera_thread.start()
         self.serial_thread = None
@@ -117,6 +122,15 @@ class Hardware:
             if camera is not None:
                 camera.release()
 
+    def print_serial_output(self):
+        """Keep terminal output off the serial command thread."""
+        while not self.stop.is_set():
+            try:
+                output = self.serial_output.get(timeout=0.1)
+            except Empty:
+                continue
+            print(output, end="", flush=True)
+
     def transmit(self, port_name, debug):
         """Send current commands, read Arduino lines, and request level on shutdown."""
         try:
@@ -144,7 +158,7 @@ class Hardware:
                                         if text:
                                             self.firmware.put((time.monotonic(), text))
                                             if debug:
-                                                print(text, flush=True)
+                                                put_latest(self.serial_output, text + "\n")
 
                                 # Human pressed the "go" key: PROCEED_CHAR (0x0A in the firmware).
                                 if self.proceed.is_set():
@@ -318,6 +332,8 @@ class Tracker:
         self.platform = self.detector = self.target = None
         self.frame = self.frame_time = self.detection = None
         self.path = None
+        self.fixed_target = False
+        self.circle_id = 0
         self.history = History()
         self.ball = None
         # Store editable gains in tenths to match the GUI step size.
@@ -332,9 +348,17 @@ class Tracker:
             return self.trajectory_gains
         return manual_gains
 
+    def set_fixed_target(self, point):
+        """Mark an explicitly selected target for firmware integral reset."""
+        self.target = point
+        self.fixed_target = True
+
     def start_path(self, points, shape):
         """Create a trajectory and set its first point as the target."""
         self.path = Trajectory(points, shape)
+        if self.path.circle is not None:
+            self.circle_id = self.circle_id % 255 + 1
+        self.fixed_target = False
         self.target = points[0]
 
     def process_frame(self, now, frame, detector):
@@ -376,24 +400,32 @@ class Tracker:
                 pins = mapped_pins
         elif (self.platform is not None and self.detection is not None
               and now - self.frame_time <= 0.25):
-            status = action if action in (Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL) else Status.TRACKING
+            status = action if action in (Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL,
+                                          Status.AUTOTUNE_MM) else Status.TRACKING
+            if status == Status.TRACKING and self.fixed_target:
+                status = Status.FIXED_TARGET
+            elif status == Status.TRACKING and self.path is not None and self.path.circle is not None:
+                status = Status.CIRCLE_TRACKING
             ball = self.platform.normalize(self.detection[0])
         if status == Status.FREQ_RUN:
             ball = freq_run  # (axis code, Hz) rides in the ball fields, which are unused in this mode
         level_pins = mapped_pins or (self.platform.pins if self.platform is not None else SERVO_PINS)
         
         # time domain parameters for PID autotuning is sent through the trim packet gains
-        if status == Status.AUTOTUNE_MM:
-            trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims, 0, float(self.rise_time_ms), float(self.max_overshoot_pct), float(self.max_error_ss))
+        if action == Status.AUTOTUNE_MM:
+            trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *level_pins, *trims, 0.0, 0,
+                               self.rise_time_ms, self.max_overshoot_pct, self.max_error_ss)
         else:
             trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *level_pins, *trims, 0.0, 0, *DEFAULT_GAINS)
         # Each button press gets its own ID, even if it selects the same mode again.
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
         timestamp = mode_request_id if status == Status.SWEEP else frame_ms
         tracking_gains = gains
-        if status in (Status.TRACKING, Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL):
+        if status in (Status.TRACKING, Status.CIRCLE_TRACKING, Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL):
             tracking_gains = tuple(value / 10 for value in self.active_gains(manual_gains))
-        if status == Status.TRACKING and self.path is not None and self.path.circle is not None:
+        if status == Status.CIRCLE_TRACKING:
+            # Keep the frame ID in the low 24 bits and the circle ID in the top byte.
+            timestamp = (frame_ms & 0xFFFFFF) | (self.circle_id << 24)
             kp, _, kd = tracking_gains
             target = self.path.circle.command_target(target, kp, kd)
         command = PACKET.pack(SYNC, status, *pins, *ball, *target, timestamp, *tracking_gains)

@@ -15,13 +15,13 @@
 // Servo C: index 1
 #define SERVO_A_MAX 124.0 // Link touches ground
 #define SERVO_A_MIN 65.0 //Links are straight
-#define SERVO_A_HORIZ 84.0 // Horizontal position (linkage parallel to gnd)
+#define SERVO_A_HORIZ 85.0 // Horizontal position (linkage parallel to gnd)
 #define SERVO_B_MAX 113.0
 #define SERVO_B_MIN 65.0
-#define SERVO_B_HORIZ (85.0 - 1)
+#define SERVO_B_HORIZ 88.0
 #define SERVO_C_MAX 106.0
 #define SERVO_C_MIN 47.0
-#define SERVO_C_HORIZ 70.0
+#define SERVO_C_HORIZ 71.0
 
 // stewart platform dimensions 
 #define S 140 // distance from center of platform to pivot point
@@ -50,6 +50,8 @@ enum class PacketStatus : uint8_t {
     FreqRun = 10,   // one frequency on one axis: x = axis (1 = X, 2 = Y), y = frequency in Hz
     IdentifyServos = 11,
     Autotilt = 12,
+    FixedTarget = 13,
+    CircleTracking = 14,
 };
  
 // Payload of Python's <3sB3B4fI3f packet, after the three sync bytes.
@@ -72,6 +74,8 @@ struct BallData { //Struct to keep track of all relevant ball data
     uint32_t frame_ms[CAMERA_SAMPLES] = {}; // Python frame timestamps [ms]
     // Gains are populated by the first tracking packet.
     float kp{}, ki{}, kd{};
+    bool fixed_target = false;
+    uint8_t circle_id = 0;
     uint8_t servo_A_pin = 0;
     uint8_t servo_B_pin = 2;
     uint8_t servo_C_pin = 1;

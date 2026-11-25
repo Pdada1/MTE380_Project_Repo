@@ -16,7 +16,7 @@ from helper import Platform, draw_ball
 from track_ball import (
     ARDUINO_SERIAL_PORT, DEFAULT_GAINS, HISTORY_SECONDS, HOLD_LEVEL_MODES, TRIM_LIMIT,
     DEFAULT_RISE_TIME_MS, RISE_TIME_LIMITS, DEFAULT_OVERSHOOT_PCT, OVERSHOOT_LIMITS,
-    MAX_ERR_SS_LIMITS, DEFAULT_MAX_ERR_SS,
+    MAX_ERR_SS_LIMITS, DEFAULT_MAX_ERR_SS, SWEEP_MODES,
     Hardware, Status, Tracker, make_trajectory,
 )
 
@@ -30,12 +30,11 @@ ACTIONS = (
     ("Autolevel Platform", "Track the ball with the separate autolevel PID controller.", "start_mode", Status.AUTOLEVEL),
     ("Level Platform", "Move to the neutral platform position.", "start_mode", Status.LEVEL),
     ("Draw Circle", "Follow a circle starting at the ball.", "start_path", "circle"),
-    ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),
-    ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "autotune_mode", Status.AUTOTUNE),
-    ("Autotune PID", "Automatically tune rise time, settling time, etc.", "start_mode", Status.AUTOTUNE_MM),
+    # ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),
+    ("Autotune PID (PM)", "Run the X and Y frequency sweeps, then hold level.", "autotune_mode", Status.AUTOTUNE),
+    ("Autotune PID (MM)", "Automatically tune rise time, settling time, etc.", "start_mode", Status.AUTOTUNE_MM),
     ("Redo Frequency", "At a prompt, step back to repeat the previous frequency.", "redo_frequency"),
-    ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
-    ("Sweep Platform", "Sweep X and Y once, then hold level.", "start_mode", Status.SWEEP),
+    # ("Sweep Platform", "Sweep X and Y once, then hold level.", "start_mode", Status.SWEEP),
     ("Quit", "Close the interface.", "close"),
 )
 MODE_LABELS = {args[0]: label for label, _, method, *args in ACTIONS if method == "start_mode"}
@@ -386,7 +385,7 @@ class App:
     def center_target(self):
         """Set the target to the platform center and cancel any path."""
         if self.tracker.platform is not None:
-            self.tracker.target = self.tracker.platform.origin
+            self.tracker.set_fixed_target(self.tracker.platform.origin)
             self.cancel_action()
 
     def start_ball_calibration(self):
@@ -645,7 +644,7 @@ class App:
                 if self.tracker.path is None:
                     self.add_polygon_point((x, y))
                 return
-            self.tracker.target = (x, y)
+            self.tracker.set_fixed_target((x, y))
             if self.action == Status.AUTOTUNE_MM:
                 self.notice("Autotune armed · target set, measuring rise time")
             else:
@@ -694,7 +693,7 @@ class App:
             self.hardware.abort.set()
         self.fps_count += 1
         if now - self.fps_t >= 2:
-            print(f"{self.fps_count / (now - self.fps_t):.1f} frames/s processed", flush=True)
+            # print(f"{self.fps_count / (now - self.fps_t):.1f} frames/s processed", flush=True)
             self.fps_count, self.fps_t = 0, now
 
     def show_frame(self):
@@ -770,7 +769,7 @@ class App:
                 else:
                     self.notice(stopped)
             if line.startswith("Start Frequency Run"):
-                self.notice(f"{line} Space = go, R = repeat previous.")
+                self.notice(f"{line} g = go, R = repeat previous.")
 
         while True:
             try:
@@ -803,7 +802,7 @@ class App:
                     if self.tracking_mode != Status.TRACKING:
                         action = self.tracking_mode
                 self.tracker.send_command(self.hardware, now, action, self.gains, self.trims, self.mode_request_id,
-                                          self.identify_pin(), self.mapped_servo_pins())
+                                          identify_pin=self.identify_pin(), mapped_pins=self.mapped_servo_pins())
             self.last_sent = now
         if now - self.last_graph >= 0.10:
             for i, canvas in enumerate(self.graphs):

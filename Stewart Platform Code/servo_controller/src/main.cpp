@@ -49,10 +49,11 @@ static void track_alternate(const CameraPacket& packet) {
 }
 
 void loop() {
+    static uint8_t last_circle_id = 0;
     if (camera_data_ready()) {
-        const CameraPacket frame = latest_camera_packet;
+        const bool was_fixed_target = ballData.fixed_target;
         camera_read_data(&ballData);
-        if (frame.status == PacketStatus::Autolevel) {
+        if (ballData.status == PacketStatus::Autolevel) {
             if (!autolevel_active) {
                 autolevel::reset();
                 autolevel_active = true;
@@ -69,8 +70,17 @@ void loop() {
             // FIXME make it so that use_autotune is always false if Autotune_MM is currently not active
             bool use_autotune = autotune_routine(&ballData);
 
+            // Repeated packets for the same fixed target must keep accumulating.
+            const int current = CAMERA_SAMPLES - 1;
+            if (ballData.fixed_target && (!was_fixed_target || ballData.xr[current] != ballData.xr[current - 1]
+                || ballData.yr[current] != ballData.yr[current - 1])) {
+                pid_reset_integral();
+            }
+            if (ballData.circle_id != 0 && ballData.circle_id != last_circle_id) {
+                pid_reset_integral();
+                last_circle_id = ballData.circle_id;
+            }
 
-            //Only run the regular controller for ordinary tracking frames.
             if (num_samples >= CAMERA_SAMPLES) {
                 float thetax = pid_get_xtilt(&ballData, use_autotune);
                 float thetay = pid_get_ytilt(&ballData, use_autotune);

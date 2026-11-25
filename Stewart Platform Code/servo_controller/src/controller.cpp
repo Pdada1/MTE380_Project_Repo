@@ -2,7 +2,13 @@
 #include "LinearFit.h" //SimpleRegression library
  
 #define POS_SAMPLES 1
-#define VEL_SAMPLES 3
+#define VEL_SAMPLES 2
+
+static constexpr float POSITION_DEADBAND_MM = 15.0f;
+static constexpr float POSITION_DEADBAND = POSITION_DEADBAND_MM / S;
+static constexpr float PROPORTIONAL_DEADBAND = POSITION_DEADBAND * (2.0f / 3.0f);
+static constexpr uint32_t TRACKING_GAP_MS = 250;
+static constexpr float INTEGRAL_UNWIND_FACTOR = 4.0f;
 
 float int_ex = 0;
 float int_ey = 0;
@@ -11,35 +17,26 @@ float int_ey = 0;
 float kp_a = 4; 
 float ki_a = 0; 
 float kd_a = 0;
-
-
-
  
-void pid_reset() {
-    int_ex = 0;
-    int_ey = 0;
+void pid_reset_integral() {
+    int_ex = 0.0f;
+    int_ey = 0.0f;
 }
- 
+
 float e_av(BallData* ball_data, char axis) {
-    float* x;
-    float* xr;
-    switch (axis) {
-        case 'x':
-            x = ball_data->x;
-            xr = ball_data->xr;
-            break;
-        case 'y':
-            x = ball_data->y;
-            xr = ball_data->yr;
-            break;
-        default:
-            return 0;
+    if (axis != 'x' && axis != 'y') {
+        return 0;
     }
     
     //Average position over latest POS_SAMPLES
     float sum = 0;
     for (int i=CAMERA_SAMPLES-POS_SAMPLES; i<CAMERA_SAMPLES; i++) {
-        sum += x[i] - xr[i];
+        const float ex = ball_data->x[i] - ball_data->xr[i];
+        const float ey = ball_data->y[i] - ball_data->yr[i];
+        const float radius = sqrtf(ex * ex + ey * ey);
+        if (radius > PROPORTIONAL_DEADBAND) {
+            sum += (axis == 'x' ? ex : ey) * (1.0f - PROPORTIONAL_DEADBAND / radius);
+        }
     }
     return sum/POS_SAMPLES;
 }
@@ -59,6 +56,12 @@ float de_av(BallData* ball_data, char axis) {
     
     // Generate error/time arrays relative to the first velocity sample.
     const uint32_t start_ms = ball_data->frame_ms[CAMERA_SAMPLES-VEL_SAMPLES];
+    // Wait for a full velocity window of fresh samples after a tracking gap.
+    for (int i = CAMERA_SAMPLES - VEL_SAMPLES + 1; i < CAMERA_SAMPLES; ++i) {
+        if (ball_data->frame_ms[i] - ball_data->frame_ms[i - 1] > TRACKING_GAP_MS) {
+            return 0.0f;
+        }
+    }
     if (ball_data->frame_ms[CAMERA_SAMPLES-1] == start_ms) {
         return 0.0f; // Buffered frames can be handled in the same Arduino millisecond.
     }
@@ -78,31 +81,42 @@ float de_av(BallData* ball_data, char axis) {
  
     return slope;
 }
- 
-float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 'x' and then 'y') per new sample, otherwise integral will be inaccurate
-    float e;
+
+static float inte(const BallData* ball_data, char axis, float proportional_error) {
+    if (axis != 'x' && axis != 'y') {
+        return 0.0f;
+    }
+    float& integral = axis == 'x' ? int_ex : int_ey;
     // Subtract in unsigned milliseconds so elapsed time survives timestamp rollover.
     const uint32_t elapsed_ms = ball_data->frame_ms[CAMERA_SAMPLES-1] - ball_data->frame_ms[CAMERA_SAMPLES-2];
-    const float dt = elapsed_ms / 1000.0f;
-    switch (axis) {
-        case 'x':
-            e = ball_data->x[CAMERA_SAMPLES-1] - ball_data->xr[CAMERA_SAMPLES-1];
-            int_ex += e*dt;
-            int_ex = constrain(int_ex, -I_LIMIT, I_LIMIT);
-            return int_ex;
-        case 'y':
-            e = ball_data->y[CAMERA_SAMPLES-1] - ball_data->yr[CAMERA_SAMPLES-1];
-            int_ey += e*dt;
-            int_ey = constrain(int_ey, -I_LIMIT, I_LIMIT);
-            return int_ey;
-        default:
-            return 0;
+    // Preserve the correction learned before the gap without integrating over missing data.
+    if (elapsed_ms > TRACKING_GAP_MS) {
+        return integral;
     }
+    const float dt = elapsed_ms / 1000.0f;
+    const int latest = CAMERA_SAMPLES - 1;
+    const float ex = ball_data->x[latest] - ball_data->xr[latest];
+    const float ey = ball_data->y[latest] - ball_data->yr[latest];
+    // Hold the accumulated bias inside the tolerance; use full error outside it.
+    if (ex * ex + ey * ey <= POSITION_DEADBAND * POSITION_DEADBAND) {
+        return integral;
+    }
+    const float error = axis == 'x' ? ex : ey;
+    const float p_tilt = proportional_error * ball_data->kp;
+    const float i_tilt = integral * ball_data->ki;
+    float delta = error * dt;
+    // After crossing a fixed target, unwind faster while I overpowers P.
+    if (ball_data->fixed_target && i_tilt * error < 0.0f
+        && p_tilt * error >= 0.0f && fabsf(i_tilt) > fabsf(p_tilt)) {
+        delta = copysignf(fminf(fabsf(delta) * INTEGRAL_UNWIND_FACTOR, fabsf(integral)), delta);
+    }
+    integral = constrain(integral + delta, -I_LIMIT, I_LIMIT);
+    return integral;
 }
 
 float pid_get_tilt(BallData* ball_data, char axis, bool autotune) { //Gets tilt for axis 'x' or 'y'
     float e = e_av(ball_data, axis);
-    float int_e = inte(ball_data, axis);
+    float int_e = inte(ball_data, axis, e);
     float d_e = de_av(ball_data, axis);
     float u;
 

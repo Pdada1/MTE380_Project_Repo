@@ -7,6 +7,7 @@ class CircleFeedforward:
     RAMP_SECONDS = 0.5
     PLATFORM_RADIUS_M = 0.14  # Match the controller's nominal distance scale.
     ROLLING_ACCEL_M_S2 = 5.89  # Small-angle acceleration per radian for a rolling sphere.
+    CENTRIPETAL_GAIN = 6.0  # Factor to increase centripetal acceleration for stronger circular motion
     MAX_TARGET_OFFSET = 0.10  # Fraction of the platform radius.
     MAX_VELOCITY_OFFSET = 0.25  # Bound the tangential offset when Kp is small.
 
@@ -34,6 +35,7 @@ class CircleFeedforward:
             return target
 
         inward_accel = self.speed**2 * self.PLATFORM_RADIUS_M / radius
+        inward_accel *= self.CENTRIPETAL_GAIN
         tilt_deg = math.degrees(inward_accel / self.ROLLING_ACCEL_M_S2)
         offset = min(tilt_deg / kp, self.MAX_TARGET_OFFSET, radius)
         x, y = target
