@@ -7,7 +7,7 @@ import time
 import tkinter as tk
 from tkinter import ttk
 from freq_response_log import RunLogger
-from freq_response_process import autotune_from_logs
+from freq_response_model import model_based_autotune_from_logs
 
 import cv2
 
@@ -562,14 +562,15 @@ class App:
         self.hardware.rerun.set()
 
     def autotune_summary(self):
-        """Process the logs in freq_logs and return the Ziegler-Nichols gains as text."""
-        gains = autotune_from_logs()
+        """Fit the plant model to the logs in freq_logs and return the designed PID gains as text."""
+        result = model_based_autotune_from_logs(fmin=0.5, fmax=1.45)
         parts = []
-        for axis, g in gains.items():
-            if g is None:
+        for axis, r in result.items():
+            if r is None:
                 parts.append(f"{axis.upper()}: no result")
             else:
-                parts.append(f"{axis.upper()}: Kp={g[0]:.2f} Ki={g[1]:.2f} Kd={g[2]:.2f}")
+                kp, ki, kd = r["gains"]
+                parts.append(f"{axis.upper()}: Kp={kp:.2f} Ki={ki:.2f} Kd={kd:.2f}")
         return " | ".join(parts)
 
     def show_autotune_result(self):
@@ -789,7 +790,7 @@ class App:
                 elif not isinstance(action, Status) and action not in ("ball", "platform"):
                     if self.tracking_mode != Status.TRACKING:
                         action = self.tracking_mode
-                self.tracker.send_command(self.hardware, now, action, self.gains, self.trims, self.mode_request_id,
+                self.tracker.send_command(self.hardware, now, action, self.gains, self.trims, self.mode_request_id,freq_run=self.freq_run_request,
                                           identify_pin=self.identify_pin(), mapped_pins=self.mapped_servo_pins())
             self.last_sent = now
         if now - self.last_graph >= 0.10:
