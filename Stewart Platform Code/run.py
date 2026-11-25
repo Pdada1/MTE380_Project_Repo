@@ -157,7 +157,6 @@ class App:
         self.connection = tk.StringVar(value="Preview" if args.preview else f"Connecting to {args.port}...")
         self.camera_error = None
         self.build_ui()
-        self.build_freq_window()
         try:
             self.config = read_config()
             self.load_calibration()
@@ -271,11 +270,14 @@ class App:
         for label, color in (("X", "#48c9ee"), ("Y", "#ffa35c")):
             tk.Label(legend, text=label, fg=color, bg="#182331", padx=9).pack(side="left")
         self.graphs = []
-        for title in ("Position relative to target (radii)", "Ball velocity (radii/s)", "Ball acceleration (radii/s²)"):
+        for title in ("Position relative to target (radii)", "Ball velocity (radii/s)"):
             ttk.Label(graphs, text=title).pack(anchor="w", pady=(7, 2))
             canvas = tk.Canvas(graphs, width=285, height=150, bg="#182331", highlightthickness=0)
             canvas.pack(fill="both", expand=True)
             self.graphs.append(canvas)
+        ttk.Label(graphs, text="Frequency Response Run").pack(anchor="w", pady=(7, 2))
+        self.freq_canvas = tk.Canvas(graphs, width=285, height=150, bg="#182331", highlightthickness=0)
+        self.freq_canvas.pack(fill="both", expand=True)
 
     # @MM
     def apply_autotune_setting(self, variable, attribute, limits, label):
@@ -293,20 +295,6 @@ class App:
         variable.set(f"{value:g}")
         self.notice(f"{label} set to {value:g}")
         
-    def build_freq_window(self):
-        """Create a separate window with a canvas for the frequency-run plot."""
-        self.freq_window = tk.Toplevel(self.root)
-        self.freq_window.title("Frequency Response Run")
-        self.freq_window.geometry("700x320")
-        self.freq_canvas = tk.Canvas(self.freq_window, bg="#182331", highlightthickness=0)
-        self.freq_canvas.pack(fill="both", expand=True)
-        self.freq_window.protocol("WM_DELETE_WINDOW", self.close_freq_window)
-
-    def close_freq_window(self):
-        """Close the frequency plot; the main interface keeps running."""
-        self.freq_canvas = None
-        self.freq_window.destroy()
-
     def control_row(self, parent, row, label, names, get_values, step, scale, low, high):
         """Build +/- controls and return a callback to refresh their values."""
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 5))
@@ -807,8 +795,7 @@ class App:
         if now - self.last_graph >= 0.10:
             for i, canvas in enumerate(self.graphs):
                 draw_history(self.tracker.history, canvas, now, i)
-            if self.freq_canvas is not None:
-                draw_freq_history(self.tracker.history, self.freq_canvas, now)
+            draw_freq_history(self.tracker.history, self.freq_canvas, now)
             self.last_graph = now
         if self.camera_error is not None:
             if self.action == "platform":
