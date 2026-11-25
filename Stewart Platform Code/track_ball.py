@@ -45,13 +45,18 @@ class Status(IntEnum):
     SWEEP = 5
     SERVO_TRIM = 6
     AUTOROTATION = 7
+    SWEEP_DATA = 9
+    FREQ_RUN = 10   # one frequency on one axis: ball x = axis code, ball y = frequency in Hz
     IDENTIFY_SERVOS = 11
     AUTOTILT = 12
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
 # they act like a latch. All other modes spam packets with their Status type
-HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE)
+HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE, Status.AUTOLEVEL, Status.FREQ_RUN)
+# Modes where the firmware runs the frequency sweep and needs the ball stream to hold the other axis.
+SWEEP_MODES = (Status.AUTOTUNE, Status.FREQ_RUN)
+SWEEP_AXIS_CODE = {"x": 1.0, "y": 2.0}  # FREQ_RUN axis codes
 
 
 def put_latest(queue, item):
@@ -78,6 +83,10 @@ class Hardware:
         self.camera_thread = Thread(target=self.capture, daemon=True)
         self.camera_thread.start()
         self.serial_thread = None
+        self.firmware = Queue()
+        self.proceed = Event()
+        self.rerun = Event()
+        self.abort = Event()
         if not preview:
             self.serial_thread = Thread(target=self.transmit, args=(port_name, debug), daemon=True)
             self.serial_thread.start()
@@ -100,7 +109,7 @@ class Hardware:
                 camera.release()
 
     def transmit(self, port_name, debug):
-        """Send current commands and request level on shutdown."""
+        """Send current commands, read Arduino lines, and request level on shutdown."""
         try:
             import serial
 
@@ -111,13 +120,36 @@ class Hardware:
                         # Give the Arduino time to reset after opening the serial port.
                         if self.stop.wait(2):
                             return
+                        port.reset_input_buffer()
                         self.messages.put(("serial", f"{port_name} connected"))
                         last_trim = None
                         last_level = None
+                        rx = b""
                         try:
                             while not self.stop.is_set():
+                                if port.in_waiting:
+                                    rx += port.read(port.in_waiting)
+                                    *lines, rx = rx.split(b"\n")
+                                    for line in lines:
+                                        text = line.decode("ascii", errors="replace").strip()
+                                        if text:
+                                            self.firmware.put((time.monotonic(), text))
+                                            if debug:
+                                                print(text, flush=True)
+
+                                # Human pressed the "go" key: PROCEED_CHAR (0x0A in the firmware).
+                                if self.proceed.is_set():
+                                    self.proceed.clear()
+                                    port.write(b"\x0a")
+                                # Redo key: the firmware offers the previous frequency again.
+                                if self.rerun.is_set():
+                                    self.rerun.clear()
+                                    port.write(b"r")
+                                if self.abort.is_set():
+                                    self.abort.clear()
+                                    port.write(b"x")
                                 try:
-                                    trim, command, last_level, mode_request = self.commands.get(timeout=0.05)
+                                    trim, command, last_level, mode_request, stream = self.commands.get(timeout=0.005)
                                 except Empty:
                                     continue
                                 if trim != last_trim:
@@ -127,13 +159,13 @@ class Hardware:
                                 if mode_request is None or mode_request != last_mode_request:
                                     port.write(command)
                                     last_mode_request = mode_request
-                                if debug:
-                                    output = port.read_all()
-                                    if output:
-                                        print(output.decode("ascii", errors="replace"), end="", flush=True)
+                                if stream is not None:
+                                    port.write(stream)
                         finally:
-                            if self.stop.is_set() and last_level is not None:
-                                port.write(last_level)
+                            if self.stop.is_set():
+                                port.write(b"x")
+                                if last_level is not None:
+                                    port.write(last_level)
                 except serial.SerialTimeoutException:
                     if self.stop.is_set():
                         return
@@ -232,6 +264,7 @@ class History:
     def __init__(self):
         """Initialize the plot buffer and derivative state."""
         self.samples = deque()
+        self.freq = None
         self.reset_derivatives()
 
     def reset_derivatives(self):
@@ -244,11 +277,13 @@ class History:
         while self.samples and self.samples[0][0] < now - HISTORY_SECONDS:
             self.samples.popleft()
 
-    def add(self, now, ball, target):
+    def add(self, now, ball, target, freq=None):
         """Record position error and estimate ball velocity and acceleration."""
+        if freq is None:
+            freq=self.freq
         if ball is None:
             self.reset_derivatives()
-            self.samples.append((now, (None, None, None)))
+            self.samples.append((now, (None, None, None,freq)))
             return
 
         error = tuple(b - t for b, t in zip(ball, target))
@@ -264,7 +299,7 @@ class History:
                                          for v, p in zip(velocity, last_velocity))
         self.velocity = (velocity, dt) if velocity is not None else None
         self.previous = now, ball
-        self.samples.append((now, (error, velocity, acceleration)))
+        self.samples.append((now, (error, velocity, acceleration, freq)))
 
 
 class Tracker:
@@ -275,6 +310,7 @@ class Tracker:
         self.frame = self.frame_time = self.detection = None
         self.path = None
         self.history = History()
+        self.ball = None
         # Store editable gains in tenths to match the GUI step size.
         self.trajectory_gains = [round(value * 10) for value in TRAJECTORY_GAINS]
 
@@ -298,6 +334,7 @@ class Tracker:
         if self.platform is None:
             return False
         ball = self.platform.normalize(self.detection[0]) if self.detection is not None else None
+        self.ball = ball
         complete = False
         if self.path is not None:
             if self.path.circle is not None and (ball is None or dt == 0 or frame_gap > 0.25):
@@ -307,7 +344,7 @@ class Tracker:
         self.history.add(now, ball, self.platform.normalize(self.target))
         return complete
 
-    def send_command(self, hardware, now, action, gains, trims, mode_request_id, identify_pin=None, mapped_pins=None):
+    def send_command(self, hardware, now, action, gains, trims, mode_request_id, freq_run=(0.0, 0.0), identify_pin=None, mapped_pins=None):
         """Queue servo trims, the active command, and a shutdown level packet."""
         pins = self.platform.pins if self.platform is not None else SERVO_PINS
         manual_gains = gains
@@ -329,6 +366,8 @@ class Tracker:
               and now - self.frame_time <= 0.25):
             status = action if action in (Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL) else Status.TRACKING
             ball = self.platform.normalize(self.detection[0])
+        if status == Status.FREQ_RUN:
+            ball = freq_run  # (axis code, Hz) rides in the ball fields, which are unused in this mode
         level_pins = mapped_pins or (self.platform.pins if self.platform is not None else SERVO_PINS)
         trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *level_pins, *trims, 0.0, 0, *DEFAULT_GAINS)
         # Each button press gets its own ID, even if it selects the same mode again.
@@ -342,4 +381,10 @@ class Tracker:
             target = self.path.circle.command_target(target, kp, kd)
         command = PACKET.pack(SYNC, status, *pins, *ball, *target, timestamp, *tracking_gains)
         level = PACKET.pack(SYNC, Status.LEVEL, *level_pins, 0, 0, 0, 0, frame_ms, *gains)
-        put_latest(hardware.commands, (trim, command, level, mode_request))
+        # During the autotune sweep the firmware keeps the ball in place from this stream.
+        stream = None
+        if (status in SWEEP_MODES and self.platform is not None and self.detection is not None
+                and now - self.frame_time <= 0.25):
+            stream = PACKET.pack(SYNC, Status.SWEEP_DATA, *pins,
+                                 *self.platform.normalize(self.detection[0]), *target, frame_ms, *gains)
+        put_latest(hardware.commands, (trim, command, level, mode_request, stream))

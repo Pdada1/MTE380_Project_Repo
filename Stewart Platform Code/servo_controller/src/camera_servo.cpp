@@ -291,4 +291,3 @@ void setTilt(float thetax, float thetay, BallData* ball_data) { //Sets platform 
     setServoAngle('B', theta2, ball_data);
     setServoAngle('C', theta3, ball_data);
 }
-

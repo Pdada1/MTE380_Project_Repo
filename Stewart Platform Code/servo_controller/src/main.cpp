@@ -1,4 +1,4 @@
-
+ 
 #include "camera_servo.h"
 #include "camera_modes.h"
 #include "controller.h"
@@ -12,7 +12,7 @@ static bool autolevel_active = false;
 void setup() {
     //Laptop + camera init
     Serial.begin(115200);
-
+ 
     servoInit();
 }
 
