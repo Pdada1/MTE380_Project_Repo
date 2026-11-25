@@ -2,9 +2,10 @@
 #include "camera_modes.h"
 #include "controller.h"
 
-float at_rise_desired_ms = 1000.0f;
 bool use_autotune_pid = false;
+float at_rise_desired_ms = 1000.0f;
 float at_overshoot_max = 0.10f;      // fraction (10%)
+float at_e_ss_max = 0.1f; 
 
 void autotune_set_rise_time(float ms) {
     // Ignore NaN/garbage, and 0.0 from an older Python build.
@@ -19,13 +20,25 @@ void autotune_set_overshoot(float percent) {
     }
 }
 
+void autotune_set_e_ss(float radii) {
+    if (isfinite(radii) && radii >= 0.01f && radii <= 0.2f) {
+        at_e_ss_max = radii;
+    }
+}
 
 
-// ---- Two-phase autotune ----
+// ---- Three-phase autotune ----
 // Phase 1 (KP): P-only step responses. Scale kp_a by t_r/desired until the
 //               10%-90% rise time is within tolerance several runs in a row.
 // Phase 2 (KD): seed kd_a, run step responses on kp_a/kd_a, measure overshoot,
 //               and raise kd_a until overshoot <= the user's maximum.
+// Phase 3 (KI): seed kd_i to 0.5, run a step response with converged kp_a/kd_a values. 
+//               once steady state is reached, measure err. If it is greater than the
+//               specified desired_min_ess, increment ki_a by 0.
+//               If still settled within timeout, incrment again until it leaves steady state
+//               If following an incrmenet, err increases due to instability (within a specified tolerance)
+//               Decrement ki_a by 0.1
+
 
 #define AT_MIN_STEP       0.35f    // radii; smaller target changes are ignored
 #define AT_TIMEOUT_MS     6000
@@ -37,21 +50,37 @@ void autotune_set_overshoot(float percent) {
 #define AT_SETTLE_MS      500
 
 // Phase 1
+#define AT_KP_SEED            4.0f    // Inital value of kd_a at the beginning of phase 2
 #define AT_KP_TOL             0.10f   // |t_r/desired - 1| counted as a good run
 #define AT_KP_CONVERGED_RUNS  2
 #define AT_KP_HEADROOM        1.2f    // one-time kp boost to offset kd's slowdown (1.0 = off)
 
-#define AT_KD_PHASE1   0.5f    // kd_a held during the kp phase
+#define AT_KD_PHASE1   0.5f    
+// kd_a held during the kp phase 
+// improves stability in case of bad trajectory 
+// TODO check if this helps with preventing ball falling off
 
 // Phase 2
-#define AT_KD_SEED            1.0f    // Inital value of kd_a at the beginning of phase 2
+#define AT_KD_SEED            1.5f    // Inital value of kd_a at the beginning of phase 2
 #define AT_KD_STEP_MAX        2.0f    // max kd multiplier per run
 #define AT_KD_CONVERGED_RUNS  2
 #define AT_PEAK_WINDOW_MIN    500     // ms to keep watching for the overshoot peak
 #define AT_PEAK_WINDOW_MAX    4000
 
-enum AutotunePhase : uint8_t { AT_PHASE_KP, AT_PHASE_KD, AT_PHASE_DONE };
+// Phase 3
+#define AT_KI_SEED            0.5f    // initial ki_a at the start of phase 3
+#define AT_KI_STEP            0.2f    // ki_a increment while the ball is still stuck
+#define AT_KI_BACKOFF         0.1f    // ki_a decrement when an increment made things worse
+#define AT_KI_WORSE_TOL       0.02f   // radii; e_ss must exceed the pre-increment value by this to count as worse
+#define AT_KI_STUCK_WAIT_MS   2000    // wait this long after an increment before incrementing again
+#define AT_KI_SS_TIMEOUT_MS   8000    // max time to wait for the ball to (re)settle
+#define AT_KI_CONVERGED_RUNS  2
+#define AT_SS_BAND            0.02f   // radii; error must stay within this band...
+#define AT_SS_HOLD_MS         800     // ...for this long to count as steady state
+
+enum AutotunePhase : uint8_t { AT_PHASE_KP, AT_PHASE_KD, AT_PHASE_KI, AT_PHASE_DONE };
 enum AutotuneState : uint8_t { AT_SETTLING, AT_ARMED, AT_MEASURING };
+enum KiStage : uint8_t { KI_SEEK_SS, KI_RAMP };
 
 static AutotunePhase at_phase = AT_PHASE_KP;
 static AutotuneState at_state = AT_SETTLING;
@@ -60,6 +89,23 @@ static uint8_t at_good_runs = 0;
 static float at_e0x, at_e0y, at_e0_sq, at_s_min;
 static uint32_t at_t_start, at_t10, at_settle_start, at_arrive_ms, at_window_ms;
 static bool at_have10, at_arrived, at_settle_timing;
+
+static KiStage at_ki_stage = KI_SEEK_SS;
+static bool at_ki_incremented;
+static float at_ki_prev_ess;
+static uint32_t at_ki_stage_ms, at_ki_inc_ms;
+
+// Steady-state detector
+static float at_ss_ref, at_ss_sum;
+static uint16_t at_ss_n;
+static uint32_t at_ss_start;
+
+
+////////////////////////////////////
+//
+//          HELPER FUNCTIONS
+//
+////////////////////////////////////
 
 // Go back to the normal (GUI) gains and wait for the ball to come to rest.
 static void at_enter_settling() {
@@ -79,9 +125,11 @@ static void at_finalize() {
     at_phase = AT_PHASE_DONE;
     use_autotune_pid = true;             // keep holding with the tuned gains
     Serial.print(F("Autotune DONE: kp_a="));  Serial.print(autotune_get_kp(), 3);
-    Serial.print(F("  kd_a="));               Serial.println(autotune_get_kd(), 3);
+    Serial.print(F("  kd_a="));               Serial.print(autotune_get_kd(), 3);
+    Serial.print(F("  ki_a="));               Serial.println(autotune_get_ki(), 3);
 }
 
+// Called once autotune kp value as been converged onto
 static void at_finish_kp(uint32_t t_r) {
     const float ratio = (float)t_r / at_rise_desired_ms;
     autotune_scale_kp(ratio);
@@ -110,19 +158,32 @@ static void at_finish_kp(uint32_t t_r) {
     at_enter_settling();
 }
 
+
+static void at_start_ki() {
+    at_phase = AT_PHASE_KI;
+    at_good_runs = 0;
+    autotune_set_ki(AT_KI_SEED);
+    Serial.print(F("Phase 3 (ki): kp_a="));  Serial.print(autotune_get_kp(), 3);
+    Serial.print(F("  kd_a="));              Serial.print(autotune_get_kd(), 3);
+    Serial.print(F("  ki_a="));              Serial.println(autotune_get_ki(), 3);
+    at_enter_settling();
+}
+
+
+// Called once autotune kd value as been converged onto
 static void at_finish_kd(float mp) {
     Serial.print(F("KD: overshoot="));   Serial.print(mp * 100.0f, 1);
     Serial.print(F("%  max="));          Serial.print(at_overshoot_max * 100.0f, 1);
     Serial.print(F("%  kd_a="));         Serial.println(autotune_get_kd(), 3);
 
     if (mp <= at_overshoot_max) {
-        if (++at_good_runs >= AT_KD_CONVERGED_RUNS) { at_finalize(); return; }
+        if (++at_good_runs >= AT_KD_CONVERGED_RUNS) { at_start_ki(); return; }  // was at_finalize()
         Serial.println(F("KD: within limit, one more confirming run"));
     } else {
         at_good_runs = 0;
         if (autotune_kd_at_max()) {
-            Serial.println(F("KD: limit reached and still overshooting, stopping"));
-            at_finalize();
+            Serial.println(F("KD: limit reached and still overshooting, moving on to ki"));
+            at_start_ki();
             return;
         }
         const float ratio = constrain(damping_from_overshoot(at_overshoot_max) /
@@ -132,6 +193,73 @@ static void at_finish_kd(float mp) {
     }
     at_enter_settling();
 }
+
+// Feed one error sample. Returns true once the error has stayed within AT_SS_BAND
+// of where the window started for AT_SS_HOLD_MS. The mean is at_ss_sum / at_ss_n.
+static bool at_ss_update(float err, uint32_t now) {
+    if (at_ss_n == 0 || fabs(err - at_ss_ref) > AT_SS_BAND) {
+        at_ss_ref = err;
+        at_ss_start = now;
+        at_ss_sum = 0;
+        at_ss_n = 0;
+    }
+    at_ss_sum += err;
+    at_ss_n++;
+    return (now - at_ss_start) >= AT_SS_HOLD_MS;
+}
+
+static void at_ki_raise(uint32_t now) {
+    autotune_set_ki(autotune_get_ki() + AT_KI_STEP);
+    at_ki_inc_ms = now;
+    at_ki_stage = KI_RAMP;
+    Serial.print(F("KI: ball stuck, raising ki_a to "));
+    Serial.println(autotune_get_ki(), 3);
+}
+
+static void at_ki_backoff() {
+    autotune_set_ki(autotune_get_ki() - AT_KI_BACKOFF);
+    Serial.print(F("KI: backing off to ki_a="));
+    Serial.println(autotune_get_ki(), 3);
+}
+
+// Called once the ball is at steady state with mean error e_ss.
+static void at_ki_evaluate(float e_ss, uint32_t now) {
+    Serial.print(F("KI: e_ss="));        Serial.print(e_ss, 3);
+    Serial.print(F(" radii  max="));     Serial.print(at_e_ss_max, 3);
+    Serial.print(F("  ki_a="));          Serial.println(autotune_get_ki(), 3);
+
+    if (e_ss <= at_e_ss_max) {                         // within spec
+        if (++at_good_runs >= AT_KI_CONVERGED_RUNS) { at_finalize(); return; }
+        Serial.println(F("KI: within limit, run again to confirm"));
+        at_enter_settling();
+        return;
+    }
+    at_good_runs = 0;
+
+    if (at_ki_incremented && e_ss > at_ki_prev_ess + AT_KI_WORSE_TOL) {
+        Serial.println(F("KI: error grew after the last increase"));
+        at_ki_backoff();
+        at_finalize();
+        return;
+    }
+    if (autotune_ki_at_max()) {
+        Serial.println(F("KI: limit reached and error still too large, stopping"));
+        at_finalize();
+        return;
+    }
+    at_ki_prev_ess = e_ss;
+    at_ki_incremented = true;
+    at_ki_raise(now);
+}
+
+
+
+////////////////////////////////////
+//
+//          HELPER FUNCTIONS
+//
+////////////////////////////////////
+
 
 bool autotune_routine(BallData* d) {
     const bool active = (d->status == PacketStatus::Autotune_MM);
@@ -144,9 +272,10 @@ bool autotune_routine(BallData* d) {
     if (!at_was_active) {                // just entered: restart at phase 1
         at_was_active = true;
         at_phase = AT_PHASE_KP;
-        autotune_set_kd(AT_KD_PHASE1);   // was autotune_set_kd(0)
+        autotune_set_kp(AT_KP_SEED);
+        autotune_set_kd(AT_KD_PHASE1);   // TODO check if adding a little bit of damping to phase 1 prevents ball falling
+        autotune_set_ki(0);
         at_good_runs = 0;
-        autotune_set_kd(0);              // kp_a is kept from the last session
         at_enter_settling();
         Serial.println(F("Autotune: phase 1 (kp), waiting for the ball to settle"));
         return false;
@@ -201,12 +330,22 @@ bool autotune_routine(BallData* d) {
             at_arrived = false;
             at_s_min = 1.0f;
             at_state = AT_MEASURING;
+
+            // ensures every run starts from the same integrator state
+            if (at_phase == AT_PHASE_KI) {
+                autotune_reset_integral();   
+                at_ki_stage = KI_SEEK_SS;
+                at_ki_stage_ms = now;
+                at_ki_incremented = false;
+                at_ss_n = 0;
+            }
+
             use_autotune_pid = true;     // step response runs on kp_a / kd_a
             Serial.print(F("Current PID parameters: kp_a = "));
             Serial.print((double)autotune_get_kp(), 3);
             Serial.print(F("  kd_a = "));
             Serial.print((double)autotune_get_kd(), 3);
-            Serial.print(F("  kdi_a = "));
+            Serial.print(F("  ki_a = "));
             Serial.print((double)autotune_get_ki(), 3);
             
             Serial.print(F("  Autotune: step of "));
@@ -241,7 +380,8 @@ bool autotune_routine(BallData* d) {
                     at_good_runs = 0;
                     at_enter_settling();
                 }
-            } else {                         // AT_PHASE_KD
+            } 
+            else if (at_phase == AT_PHASE_KD) {                       
                 if (!at_arrived && s <= 0.1f) {
                     at_arrived = true;
                     at_arrive_ms = now;
@@ -259,6 +399,39 @@ bool autotune_routine(BallData* d) {
                     at_enter_settling();
                 }
             }
+            else if (at_phase == AT_PHASE_KI) {
+                const float err = sqrt(ex * ex + ey * ey);   // current error magnitude
+                const bool steady = at_ss_update(err, now);
+
+                if (at_ki_stage == KI_SEEK_SS) {
+                    if (steady) {
+                        at_ki_evaluate(at_ss_sum / at_ss_n, now);
+                    } else if (now - at_ki_stage_ms > AT_KI_SS_TIMEOUT_MS) {
+                        if (at_ki_incremented) {
+                            Serial.println(F("KI: never re-settled after raising ki (unstable)"));
+                            at_ki_backoff();
+                            at_finalize();
+                        } else {
+                            Serial.println(F("KI: timed out, run ignored (ki unchanged)"));
+                            at_enter_settling();
+                        }
+                    }
+                } else {                                     // KI_RAMP: ball is stuck above the limit
+                    if (!steady) {                           // ball moved: wait for it to re-settle
+                        at_ki_stage = KI_SEEK_SS;
+                        at_ki_stage_ms = now;
+                        Serial.println(F("KI: ball moved, waiting for it to settle"));
+                    } else if (now - at_ki_inc_ms >= AT_KI_STUCK_WAIT_MS) {
+                        if (autotune_ki_at_max()) {
+                            Serial.println(F("KI: limit reached, ball still stuck, stopping"));
+                            at_finalize();
+                        } else {
+                            at_ki_raise(now);                // still stuck: raise again
+                        }
+                    }
+                }
+            }
+
             break;
         }
     }

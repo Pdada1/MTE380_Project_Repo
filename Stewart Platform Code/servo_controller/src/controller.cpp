@@ -8,8 +8,8 @@ float int_ex = 0;
 float int_ey = 0;
 
 // @MM autotune PID params
-float kp_a = 4; //todo find a good conservative value to have as an initial proportion constant
-float ki_a = 0; // Have some derivative and integral action to improve rise_time convergence 
+float kp_a = 4; 
+float ki_a = 0; 
 float kd_a = 0;
 
 
@@ -132,6 +132,15 @@ float pid_get_ytilt(BallData* ball_data, bool autotune) {
 
 
 
+// @ MM
+
+
+// FIXME refactor code such that kp is only ever set, not scaled
+void autotune_set_kp(float kp) {
+    kp_a = constrain(kp, KP_MIN, KP_MAX);
+}
+
+
 void autotune_scale_kp(float scale) { 
     kp_a *= scale; 
     kp_a = constrain(kp_a, KP_MIN, KP_MAX);
@@ -163,5 +172,19 @@ bool autotune_kd_at_max() {
 
 float autotune_get_ki(){
     return ki_a;
+}
+
+void autotune_set_ki(float ki) {
+    ki_a = constrain(ki, KI_MIN, KI_MAX);
+}
+
+bool autotune_ki_at_max() {
+    return ki_a >= KI_MAX - 1e-3f;
+}
+
+// Start a ki run from a known integrator state.
+void autotune_reset_integral() {
+    int_ex = 0;
+    int_ey = 0;
 }
     

@@ -14,5 +14,9 @@ bool autotune_kd_at_max();
 bool autotune_routine(BallData* ballData);
 void autotune_set_rise_time(float ms);
 void autotune_set_overshoot(float percent);
+void autotune_set_e_ss(float radii);
+void autotune_set_ki(float ki);
+bool autotune_ki_at_max();
+void autotune_reset_integral();
 
 #endif

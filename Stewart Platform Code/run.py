@@ -14,6 +14,7 @@ from helper import Platform, draw_ball
 from track_ball import (
     ARDUINO_SERIAL_PORT, DEFAULT_GAINS, HISTORY_SECONDS, HOLD_LEVEL_MODES, TRIM_LIMIT, TRIM_PINS,
     DEFAULT_RISE_TIME_MS, RISE_TIME_LIMITS, DEFAULT_OVERSHOOT_PCT, OVERSHOOT_LIMITS,
+    MAX_ERR_SS_LIMITS, DEFAULT_MAX_ERR_SS,
     Hardware, Status, Tracker, make_trajectory,
 )
 
@@ -162,9 +163,11 @@ class App:
 
         self.rise_time = tk.StringVar(value=f"{DEFAULT_RISE_TIME_MS:g}")
         self.overshoot = tk.StringVar(value=f"{DEFAULT_OVERSHOOT_PCT:g}")
+        self.error_ss  = tk.StringVar(value=f"{DEFAULT_MAX_ERR_SS:g}")
         for text, variable, attribute, limits in (
             ("Rise (ms)", self.rise_time, "rise_time_ms", RISE_TIME_LIMITS),
             ("Max overshoot (%)", self.overshoot, "max_overshoot_pct", OVERSHOOT_LIMITS),
+            ("Max  (radii)", self.error_ss, "max_error_ss", MAX_ERR_SS_LIMITS),
         ):
             ttk.Label(tune, text=text).pack(side="left", padx=(0, 3))
             entry = ttk.Entry(tune, textvariable=variable, width=6, justify="right")

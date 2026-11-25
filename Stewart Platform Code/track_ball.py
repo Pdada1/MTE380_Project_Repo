@@ -39,6 +39,8 @@ DEFAULT_RISE_TIME_MS = 1000
 RISE_TIME_LIMITS = (400, 1000) # ms, accepted entered range in the GUI
 DEFAULT_OVERSHOOT_PCT = 10
 OVERSHOOT_LIMITS = (5, 50) # percent; the firmware ignores entered values outside this
+DEFAULT_MAX_ERR_SS = 0.1
+MAX_ERR_SS_LIMITS = (0.01, 0.2) # Relative to ball radii 
 
 class Status(IntEnum):
     """Match the command and tracking status values used by the Arduino."""
@@ -258,6 +260,7 @@ class Tracker:
         self.trajectory_gains = [round(value * 10) for value in TRAJECTORY_GAINS]
         self.rise_time_ms = DEFAULT_RISE_TIME_MS # @MM
         self.max_overshoot_pct = DEFAULT_OVERSHOOT_PCT # @MM
+        self.max_error_ss = DEFAULT_MAX_ERR_SS # @MM
 
     def active_gains(self, manual_gains):
         """Return the editable gain set for the current tracking mode."""
@@ -303,7 +306,7 @@ class Tracker:
             ball = self.platform.normalize(self.detection[0])
         trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims,
                    float(self.rise_time_ms), 0,
-                   float(self.max_overshoot_pct), 0.0, 0.0) # @MM
+                   float(self.max_overshoot_pct), float(self.max_error_ss), 0.0) # @MM
         # Each button press gets its own ID, even if it selects the same mode again.
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
         timestamp = mode_request_id if status == Status.SWEEP else frame_ms

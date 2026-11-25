@@ -63,6 +63,7 @@ void handle_camera_command(const CameraPacket& packet, BallData& ballData) {
             apply_servo_trims(packet, ballData);
             autotune_set_rise_time(packet.yr);     // trim packet: yr = desired rise time (ms)
             autotune_set_overshoot(packet.kp);     // trim packet: kp = max overshoot (%)
+            autotune_set_e_ss(packet.ki);          // trim packet: ki = max steady state error
             break;
         case PacketStatus::Autotune: {
             set_command_channels(packet, ballData);
