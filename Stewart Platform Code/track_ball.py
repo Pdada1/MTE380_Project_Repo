@@ -35,6 +35,14 @@ HISTORY_SECONDS = 30
 TRIM_LIMIT = 10
 
 
+# @MM
+DEFAULT_RISE_TIME_MS = 1000
+RISE_TIME_LIMITS = (400, 1000) # ms, accepted entered range in the GUI
+DEFAULT_OVERSHOOT_PCT = 10
+OVERSHOOT_LIMITS = (5, 50) # percent; the firmware ignores entered values outside this
+DEFAULT_MAX_ERR_SS = 0.1
+MAX_ERR_SS_LIMITS = (0.01, 0.2) # Relative to ball radii 
+
 class Status(IntEnum):
     """Match the command and tracking status values used by the Arduino."""
     BALL_LOST = 0
@@ -45,6 +53,7 @@ class Status(IntEnum):
     SWEEP = 5
     SERVO_TRIM = 6
     AUTOROTATION = 7
+    AUTOTUNE_MM = 8
     SWEEP_DATA = 9
     FREQ_RUN = 10   # one frequency on one axis: ball x = axis code, ball y = frequency in Hz
     IDENTIFY_SERVOS = 11
@@ -313,6 +322,9 @@ class Tracker:
         self.ball = None
         # Store editable gains in tenths to match the GUI step size.
         self.trajectory_gains = [round(value * 10) for value in TRAJECTORY_GAINS]
+        self.rise_time_ms = DEFAULT_RISE_TIME_MS # @MM
+        self.max_overshoot_pct = DEFAULT_OVERSHOOT_PCT # @MM
+        self.max_error_ss = DEFAULT_MAX_ERR_SS # @MM
 
     def active_gains(self, manual_gains):
         """Return the editable gain set for the current tracking mode."""
@@ -353,7 +365,7 @@ class Tracker:
         ball = (0.0, 0.0)
         target = self.platform.normalize(self.target) if self.platform is not None else (0.0, 0.0)
         status = Status.BALL_LOST
-        if isinstance(action, Status) and action not in (Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL):
+        if isinstance(action, Status) and action not in (Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL, Status.AUTOTUNE_MM): # @MM
             status = action
         elif action == "platform" and identify_pin is not None:
             status = Status.IDENTIFY_SERVOS
@@ -369,7 +381,12 @@ class Tracker:
         if status == Status.FREQ_RUN:
             ball = freq_run  # (axis code, Hz) rides in the ball fields, which are unused in this mode
         level_pins = mapped_pins or (self.platform.pins if self.platform is not None else SERVO_PINS)
-        trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *level_pins, *trims, 0.0, 0, *DEFAULT_GAINS)
+        
+        # time domain parameters for PID autotuning is sent through the trim packet gains
+        if status == Status.AUTOTUNE_MM
+            trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims, 0, float(self.rise_time_ms), float(self.max_overshoot_pct), float(self.max_error_ss))
+        else
+            trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *level_pins, *trims, 0.0, 0, *DEFAULT_GAINS)
         # Each button press gets its own ID, even if it selects the same mode again.
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
         timestamp = mode_request_id if status == Status.SWEEP else frame_ms

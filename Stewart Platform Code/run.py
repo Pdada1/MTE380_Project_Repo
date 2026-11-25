@@ -14,8 +14,9 @@ import cv2
 from calibrate import calibration_objects, find_platform, identify_marker, read_config, sample_ball_color, save_config
 from helper import Platform, draw_ball
 from track_ball import (
-    ARDUINO_SERIAL_PORT, DEFAULT_GAINS, HISTORY_SECONDS, HOLD_LEVEL_MODES, SWEEP_AXIS_CODE, SWEEP_MODES,
-    TRIM_LIMIT,
+    ARDUINO_SERIAL_PORT, DEFAULT_GAINS, HISTORY_SECONDS, HOLD_LEVEL_MODES, TRIM_LIMIT,
+    DEFAULT_RISE_TIME_MS, RISE_TIME_LIMITS, DEFAULT_OVERSHOOT_PCT, OVERSHOOT_LIMITS,
+    MAX_ERR_SS_LIMITS, DEFAULT_MAX_ERR_SS,
     Hardware, Status, Tracker, make_trajectory,
 )
 
@@ -31,6 +32,7 @@ ACTIONS = (
     ("Draw Circle", "Follow a circle starting at the ball.", "start_path", "circle"),
     ("Draw Polygon", "Click vertices, then press Go to follow the polygon.", "start_path", "polygon"),
     ("Autotune Motors", "Run the X and Y frequency sweeps, then hold level.", "autotune_mode", Status.AUTOTUNE),
+    ("Autotune PID", "Automatically tune rise time, settling time, etc.", "start_mode", Status.AUTOTUNE_MM),
     ("Redo Frequency", "At a prompt, step back to repeat the previous frequency.", "redo_frequency"),
     ("Autolevel Platform", "Hold neutral tilt until automatic leveling is implemented.", "start_mode", Status.AUTOLEVEL),
     ("Sweep Platform", "Sweep X and Y once, then hold level.", "start_mode", Status.SWEEP),
@@ -229,6 +231,29 @@ class App:
         self.control_row(controls, 1, "Servo trim", ("R", "G", "B"),
                          lambda: self.trims, 1, 1, -TRIM_LIMIT, TRIM_LIMIT)
 
+
+        # @MM
+        ttk.Label(controls, text="Autotune").grid(row=2, column=0, sticky="w", padx=(0, 5))
+        tune = ttk.Frame(controls)
+        tune.grid(row=2, column=1, columnspan=3, sticky="w", padx=2, pady=3)
+
+        self.rise_time = tk.StringVar(value=f"{DEFAULT_RISE_TIME_MS:g}")
+        self.overshoot = tk.StringVar(value=f"{DEFAULT_OVERSHOOT_PCT:g}")
+        self.error_ss  = tk.StringVar(value=f"{DEFAULT_MAX_ERR_SS:g}")
+        for text, variable, attribute, limits in (
+            ("Rise (ms)", self.rise_time, "rise_time_ms", RISE_TIME_LIMITS),
+            ("Max overshoot (%)", self.overshoot, "max_overshoot_pct", OVERSHOOT_LIMITS),
+            ("Max  (radii)", self.error_ss, "max_error_ss", MAX_ERR_SS_LIMITS),
+        ):
+            ttk.Label(tune, text=text).pack(side="left", padx=(0, 3))
+            entry = ttk.Entry(tune, textvariable=variable, width=6, justify="right")
+            entry.pack(side="left", padx=(0, 10))
+            apply = lambda event=None, v=variable, a=attribute, l=limits, t=text: \
+                self.apply_autotune_setting(v, a, l, t)
+            entry.bind("<Return>", apply)
+            entry.bind("<FocusOut>", apply)
+        # @MM
+        
         run = ttk.LabelFrame(middle, text="Frequency response", padding=8)
         run.grid(row=4, column=0, sticky="ew", pady=(5, 0))
         ttk.Label(run, text="Axis").pack(side="left")
@@ -253,6 +278,22 @@ class App:
             canvas.pack(fill="both", expand=True)
             self.graphs.append(canvas)
 
+    # @MM
+    def apply_autotune_setting(self, variable, attribute, limits, label):
+        """Validate a textbox and store it on the tracker."""
+        low, high = limits
+        try:
+            value = float(variable.get())
+        except ValueError:
+            value = None
+        if value is None or not low <= value <= high:
+            self.notice(f"{label} must be a number from {low} to {high}.")
+            variable.set(f"{getattr(self.tracker, attribute):g}")   # revert the box
+            return
+        setattr(self.tracker, attribute, value)
+        variable.set(f"{value:g}")
+        self.notice(f"{label} set to {value:g}")
+        
     def build_freq_window(self):
         """Create a separate window with a canvas for the frequency-run plot."""
         self.freq_window = tk.Toplevel(self.root)
@@ -605,7 +646,10 @@ class App:
                     self.add_polygon_point((x, y))
                 return
             self.tracker.target = (x, y)
-            self.cancel_action()
+            if self.action == Status.AUTOTUNE_MM:
+                self.notice("Autotune armed · target set, measuring rise time")
+            else:
+                self.cancel_action()
 
     def add_polygon_point(self, point):
         """Add a vertex without changing the current target."""

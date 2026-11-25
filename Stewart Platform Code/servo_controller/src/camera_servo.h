@@ -18,7 +18,7 @@
 #define SERVO_A_HORIZ 84.0 // Horizontal position (linkage parallel to gnd)
 #define SERVO_B_MAX 113.0
 #define SERVO_B_MIN 65.0
-#define SERVO_B_HORIZ 85.0
+#define SERVO_B_HORIZ (85.0 - 1)
 #define SERVO_C_MAX 106.0
 #define SERVO_C_MIN 47.0
 #define SERVO_C_HORIZ 70.0
@@ -45,6 +45,7 @@ enum class PacketStatus : uint8_t {
     Sweep = 5,
     ServoTrim = 6,
     Autorotation = 7,
+    Autotune_MM = 8,
     SweepData = 9, //ball/target stream the PC sends while an autotune sweep runs
     FreqRun = 10,   // one frequency on one axis: x = axis (1 = X, 2 = Y), y = frequency in Hz
     IdentifyServos = 11,
@@ -74,6 +75,9 @@ struct BallData { //Struct to keep track of all relevant ball data
     uint8_t servo_A_pin = 0;
     uint8_t servo_B_pin = 2;
     uint8_t servo_C_pin = 1;
+
+
+    PacketStatus status = PacketStatus::BallLost; // @MM
 };
  
 bool camera_data_ready();

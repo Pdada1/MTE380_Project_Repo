@@ -61,16 +61,15 @@ bool camera_data_ready() {
                              sizeof(latest_camera_packet));
             sync[0] = sync[1] = sync[2] = 0;
 
-            // Stop draining here so the command runs before any later tracking packet.
             const PacketStatus status = latest_camera_packet.status;
-            const bool tracking_frame = status == PacketStatus::Tracking || status == PacketStatus::Autolevel;
+            const bool tracking_frame = status == PacketStatus::Tracking || status == PacketStatus::Autolevel; // @MM || status == PacketStatus::Autotune_MM;
             if (!tracking_frame && status != PacketStatus::BallLost) {
                 command_pending = true;
                 return false;
             }
 
             // Use the Python timestamp only to reject resends of the same frame.
-            if (status == PacketStatus::Tracking && (!have_tracking_frame || latest_camera_packet.timestamp != last_frame_ms)) {
+            if (status == PacketStatus::Tracking && (!have_tracking_frame || latest_camera_packet.timestamp != last_frame_ms)) { // @MM if (tracking_frame && ...)
                 last_frame_ms = latest_camera_packet.timestamp;
                 last_frame_status = status;
                 have_tracking_frame = true;
@@ -104,6 +103,7 @@ void camera_read_data(BallData* ball_data) { //Assumes camera data is ready
         ball_data->kp = latest_camera_packet.kp;
         ball_data->ki = latest_camera_packet.ki;
         ball_data->kd = latest_camera_packet.kd;
+        ball_data->status = latest_camera_packet.status;   // @MM
     } while (camera_data_ready());
 
     //Logging

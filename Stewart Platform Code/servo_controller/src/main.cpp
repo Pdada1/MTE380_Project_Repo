@@ -2,6 +2,7 @@
 #include "camera_servo.h"
 #include "camera_modes.h"
 #include "controller.h"
+#include "autotune.h"
 #include "alternate_tracking.h"
 #include "autolevel/controller.h"
 
@@ -63,11 +64,16 @@ void loop() {
                 autolevel_active = false;
             }
             num_samples++;
+          
+            // Run autotune routine: checks if autotune PID parameters should be used
+            // FIXME make it so that use_autotune is always false if Autotune_MM is currently not active
+            bool use_autotune = autotune_routine(&ballData);
+
 
             //Only run the regular controller for ordinary tracking frames.
             if (num_samples >= CAMERA_SAMPLES) {
-                float thetax = pid_get_xtilt(&ballData);
-                float thetay = pid_get_ytilt(&ballData);
+                float thetax = pid_get_xtilt(&ballData, use_autotune);
+                float thetay = pid_get_ytilt(&ballData, use_autotune);
                 setTilt(thetax, thetay, &ballData);
             }
         }
