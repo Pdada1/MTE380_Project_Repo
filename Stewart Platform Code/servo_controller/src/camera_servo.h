@@ -15,14 +15,14 @@
 // Servo C: index 1
 #define SERVO_A_MAX 124.0 // Link touches ground
 #define SERVO_A_MIN 65.0 //Links are straight
-#define SERVO_A_HORIZ 83.0 // Horizontal position (linkage parallel to gnd)
+#define SERVO_A_HORIZ 84.0 // Horizontal position (linkage parallel to gnd)
 #define SERVO_B_MAX 113.0
 #define SERVO_B_MIN 65.0
 #define SERVO_B_HORIZ 85.0
 #define SERVO_C_MAX 106.0
 #define SERVO_C_MIN 47.0
-#define SERVO_C_HORIZ 71.0
- 
+#define SERVO_C_HORIZ 70.0
+
 // stewart platform dimensions 
 #define S 140 // distance from center of platform to pivot point
 #define H 100 // height of center point from origin (constrained to be a constant)
@@ -32,9 +32,9 @@
 #define PLANE_ANGLE_MAX 15
  
 #define SHIELD_ADDR 0x40
- 
-#define CAMERA_SAMPLES 3
- 
+
+#define CAMERA_SAMPLES 12
+
 // Match the status byte sent by track_ball.py.
 enum class PacketStatus : uint8_t {
     BallLost = 0,
@@ -44,8 +44,11 @@ enum class PacketStatus : uint8_t {
     Autolevel = 4,
     Sweep = 5,
     ServoTrim = 6,
+    Autorotation = 7,
     SweepData = 9, //ball/target stream the PC sends while an autotune sweep runs
     FreqRun = 10,   // one frequency on one axis: x = axis (1 = X, 2 = Y), y = frequency in Hz
+    IdentifyServos = 11,
+    Autotilt = 12,
 };
  
 // Payload of Python's <3sB3B4fI3f packet, after the three sync bytes.
@@ -75,21 +78,12 @@ struct BallData { //Struct to keep track of all relevant ball data
  
 bool camera_data_ready();
 bool camera_take_command(CameraPacket& packet);
- 
 void camera_read_data(BallData* ball_data);
  
 void servoInit();
- 
-/*!
- *  @brief  Sets the servo angle for a given servo 
- *  @param  servo Servo number 'A'/'B'/'C'
- *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
- *  @param  ball_data ballData struct
- */
+void identify_servo_pins(const CameraPacket& packet);
 void setServoAngle(char servo, float angle_rel_horiz, BallData* ball_data);
- 
 void apply_servo_trims(const CameraPacket& packet, BallData& ballData);
- 
 void setTilt(float thetax, float thetay, BallData* ball_data);
  
 #endif

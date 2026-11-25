@@ -10,27 +10,28 @@ import time
 
 import cv2
 
+from circle_feedforward import CircleFeedforward
 from helper import SERVO_PINS, open_camera
 
 
 SYNC = bytes((0x0B, 0x00, 0x0B))
 # Wire fields in order: sync, status, pins, ball XY, target XY, timestamp, PID gains.
 PACKET = struct.Struct("<3sB3B4fI3f")
-ARDUINO_SERIAL_PORT = "COM6"
+ARDUINO_SERIAL_PORT = "COM5"
 BAUD_RATE = 115200
-DEFAULT_GAINS = (7.0, 0.2, 4.8)
-TRAJECTORY_GAINS = (6.0, 1.8, 4.5)  # Kp, Ki, Kd for circle tracking
+DEFAULT_GAINS = (5.0, 1.6, 4.0)
+TRAJECTORY_GAINS = (7.5, 0.6, 5.0)  # Kp, Ki, Kd for circle and polygon tracking
 
-TRAJECTORY_SPEED = 0.5
-TRACKING_SLOW_ERROR = 0.05
-TRACKING_PAUSE_ERROR = 0.30
-MIN_SPEED_FACTOR = 1.0
-CIRCLE_POINTS = 108              # More points make the displayed circle smoother
-WAYPOINT_TOLERANCE = 0.10      # Arrival distance as a fraction of platform radius
-PLATFORM_MARGIN = 0.10         # Keep trajectories away from the platform edge
+# Speeds are in platform radii per second. Errors are fractions of the radius.
+CIRCLE_SPEED = 0.15
+CIRCLE_SLOW_ERROR = 0.10
+CIRCLE_PAUSE_ERROR = 0.40
+CIRCLE_POINTS = 72
+CIRCLE_PLATFORM_MARGIN = 0.10
+
+POLYGON_VERTEX_TOLERANCE = 0.10
 
 HISTORY_SECONDS = 30
-TRIM_PINS = SERVO_PINS
 TRIM_LIMIT = 10
 
 
@@ -43,9 +44,11 @@ class Status(IntEnum):
     AUTOLEVEL = 4
     SWEEP = 5
     SERVO_TRIM = 6
-    CALIBRATE_SERVOS = 7
+    AUTOROTATION = 7
     SWEEP_DATA = 9
     FREQ_RUN = 10   # one frequency on one axis: ball x = axis code, ball y = frequency in Hz
+    IDENTIFY_SERVOS = 11
+    AUTOTILT = 12
 
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
@@ -106,60 +109,71 @@ class Hardware:
                 camera.release()
 
     def transmit(self, port_name, debug):
-        """Send current commands read Arduino lines, and request level on shutdown."""
+        """Send current commands, read Arduino lines, and request level on shutdown."""
         try:
             import serial
 
-            with serial.Serial(port_name, BAUD_RATE, write_timeout=0.1) as port:
-                # Give the Arduino time to reset after opening the serial port.
-                if self.stop.wait(2):
-                    return
-                port.reset_input_buffer()
-                self.messages.put(("serial", f"{port_name} connected"))
-                last_trim = None
-                last_mode_request = None
-                last_level = None
-                rx = b""
+            last_mode_request = None
+            while not self.stop.is_set():
                 try:
-                    while not self.stop.is_set():
-                        if port.in_waiting:
-                            rx += port.read(port.in_waiting)
-                            *lines, rx = rx.split(b"\n")
-                            for line in lines:
-                                text = line.decode("ascii", errors="replace").strip()
-                                if text:
-                                    self.firmware.put((time.monotonic(), text))
-                                    if debug:
-                                        print(text, flush=True)
-
-                        # Human pressed the "go" key: send PROCEED_CHAR (0x0A in the firmware).
-                        if self.proceed.is_set():
-                            self.proceed.clear()
-                            port.write(b"\x0a")
-                        # Redo key: the firmware steps back and offers the previous frequency.
-                        if self.rerun.is_set():
-                            self.rerun.clear()
-                            port.write(b"r")
-                        if self.abort.is_set():
-                            self.abort.clear()
-                            port.write(b"x")
+                    with serial.Serial(port_name, BAUD_RATE, write_timeout=0.1) as port:
+                        # Give the Arduino time to reset after opening the serial port.
+                        if self.stop.wait(2):
+                            return
+                        port.reset_input_buffer()
+                        self.messages.put(("serial", f"{port_name} connected"))
+                        last_trim = None
+                        last_level = None
+                        rx = b""
                         try:
-                            trim, command, last_level, mode_request, stream = self.commands.get(timeout=0.005)
-                        except Empty:
-                            continue
-                        if trim != last_trim:
-                            port.write(trim)
-                            last_trim = trim
-                        # Deduplicate after sending so replacing a queued update can't lose the request.
-                        if mode_request is None or mode_request != last_mode_request:
-                            port.write(command)
-                            last_mode_request = mode_request
-                        if stream is not None:
-                            port.write(stream)
-                finally:
-                    port.write(b"x")
-                    if last_level is not None:
-                        port.write(last_level)
+                            while not self.stop.is_set():
+                                if port.in_waiting:
+                                    rx += port.read(port.in_waiting)
+                                    *lines, rx = rx.split(b"\n")
+                                    for line in lines:
+                                        text = line.decode("ascii", errors="replace").strip()
+                                        if text:
+                                            self.firmware.put((time.monotonic(), text))
+                                            if debug:
+                                                print(text, flush=True)
+
+                                # Human pressed the "go" key: PROCEED_CHAR (0x0A in the firmware).
+                                if self.proceed.is_set():
+                                    self.proceed.clear()
+                                    port.write(b"\x0a")
+                                # Redo key: the firmware offers the previous frequency again.
+                                if self.rerun.is_set():
+                                    self.rerun.clear()
+                                    port.write(b"r")
+                                if self.abort.is_set():
+                                    self.abort.clear()
+                                    port.write(b"x")
+                                try:
+                                    trim, command, last_level, mode_request, stream = self.commands.get(timeout=0.005)
+                                except Empty:
+                                    continue
+                                if trim != last_trim:
+                                    port.write(trim)
+                                    last_trim = trim
+                                # Deduplicate after sending so replacing a queued update can't lose the request.
+                                if mode_request is None or mode_request != last_mode_request:
+                                    port.write(command)
+                                    last_mode_request = mode_request
+                                if stream is not None:
+                                    port.write(stream)
+                        finally:
+                            if self.stop.is_set():
+                                port.write(b"x")
+                                if last_level is not None:
+                                    port.write(last_level)
+                except serial.SerialTimeoutException:
+                    if self.stop.is_set():
+                        return
+                    # Reopen the port to clear a possibly partial packet.
+                    self.messages.put(("serial", f"{port_name} write timeout. Reconnecting..."))
+                    if last_mode_request is not None and last_mode_request[0] == Status.LEVEL:
+                        last_mode_request = None
+                    self.stop.wait(0.25)
         except Exception as error:
             self.messages.put(("serial", str(error)))
 
@@ -172,25 +186,27 @@ class Trajectory:
         self.shape = shape
         self.segment = 0
         self.distance = 0.0
+        self.circle = CircleFeedforward() if shape == "circle" else None
 
     def advance(self, platform, ball, target, dt):
         """Return the next target and whether the path is complete."""
         error = math.dist(ball, platform.normalize(target))
         if self.shape == "polygon":
-            # Hold the current vertex until the ball reaches it.
-            if error > WAYPOINT_TOLERANCE:
-                return target, False
-            if self.segment == len(self.points) - 1:
-                return target, True
-            self.segment += 1
-            return self.points[self.segment], False
+            return self.advance_polygon(target, error)
 
-        if error >= TRACKING_PAUSE_ERROR:
-            return target, False
-        # Slow the target as the ball falls behind.
-        factor = min(1.0, (TRACKING_PAUSE_ERROR - error) / (TRACKING_PAUSE_ERROR - TRACKING_SLOW_ERROR))
-        speed = MIN_SPEED_FACTOR + (1 - MIN_SPEED_FACTOR) * factor
-        distance = TRAJECTORY_SPEED * platform.radius * dt * speed
+        # Fade to zero as tracking error grows, with no jump at either threshold.
+        factor = (CIRCLE_PAUSE_ERROR - error) / (CIRCLE_PAUSE_ERROR - CIRCLE_SLOW_ERROR)
+        factor = max(0.0, min(1.0, factor))
+        speed = factor * factor * (3 - 2 * factor)
+        # Circle chords all have the same length. Slow down before the final target.
+        chord = math.dist(self.points[0], self.points[1])
+        remaining = (len(self.points) - 1 - self.segment) * chord - self.distance
+        if remaining <= 1e-6:
+            self.circle.stop()
+            return self.points[-1], True
+        distance = platform.radius * self.circle.advance(
+            dt, CIRCLE_SPEED * speed, CIRCLE_SPEED, remaining / platform.radius
+        )
         while self.segment < len(self.points) - 1:
             a, b = self.points[self.segment:self.segment + 2]
             length = math.dist(a, b)
@@ -202,7 +218,19 @@ class Trajectory:
             distance -= remaining
             self.segment += 1
             self.distance = 0.0
+        self.circle.stop()
         return self.points[-1], True
+
+
+    def advance_polygon(self, target, error):
+        """Hold each vertex as the target until the ball reaches it."""
+        if error >= POLYGON_VERTEX_TOLERANCE:
+            return target, False
+        if self.segment == len(self.points) - 1:
+            return target, True
+
+        self.segment += 1
+        return self.points[self.segment], False
 
 
 def make_trajectory(platform, start_px, shape):
@@ -210,7 +238,7 @@ def make_trajectory(platform, start_px, shape):
     ox, oy = platform.origin
     x, y = start_px
     radius = platform.radius
-    safe_radius = radius * (1 - PLATFORM_MARGIN)
+    safe_radius = radius * (1 - CIRCLE_PLATFORM_MARGIN)
     distance = math.hypot(x - ox, y - oy)
 
     if shape == "circle":
@@ -288,7 +316,7 @@ class Tracker:
 
     def active_gains(self, manual_gains):
         """Return the editable gain set for the current tracking mode."""
-        if self.path is not None and self.path.shape == "circle":
+        if self.path is not None and self.path.shape in ("circle"):
             return self.trajectory_gains
         return manual_gains
 
@@ -299,7 +327,8 @@ class Tracker:
 
     def process_frame(self, now, frame, detector):
         """Detect the ball, update the path and history, and report completion."""
-        dt = min(now - self.frame_time, 0.1) if self.frame_time is not None else 0
+        frame_gap = now - self.frame_time if self.frame_time is not None else 0
+        dt = min(frame_gap, 0.1)
         self.frame, self.frame_time = frame, now
         self.detection = detector.detect(frame) if detector is not None else None
         if self.platform is None:
@@ -307,12 +336,15 @@ class Tracker:
         ball = self.platform.normalize(self.detection[0]) if self.detection is not None else None
         self.ball = ball
         complete = False
-        if self.path is not None and ball is not None:
-            self.target, complete = self.path.advance(self.platform, ball, self.target, dt)
+        if self.path is not None:
+            if self.path.circle is not None and (ball is None or dt == 0 or frame_gap > 0.25):
+                self.path.circle.stop()
+            elif ball is not None:
+                self.target, complete = self.path.advance(self.platform, ball, self.target, dt)
         self.history.add(now, ball, self.platform.normalize(self.target))
         return complete
 
-    def send_command(self, hardware, now, action, gains, trims, mode_request_id, freq_run=(0.0, 0.0)):
+    def send_command(self, hardware, now, action, gains, trims, mode_request_id, freq_run=(0.0, 0.0), identify_pin=None, mapped_pins=None):
         """Queue servo trims, the active command, and a shutdown level packet."""
         pins = self.platform.pins if self.platform is not None else SERVO_PINS
         manual_gains = gains
@@ -321,25 +353,34 @@ class Tracker:
         ball = (0.0, 0.0)
         target = self.platform.normalize(self.target) if self.platform is not None else (0.0, 0.0)
         status = Status.BALL_LOST
-        if isinstance(action, Status):
+        if isinstance(action, Status) and action not in (Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL):
             status = action
+        elif action == "platform" and identify_pin is not None:
+            status = Status.IDENTIFY_SERVOS
+            pins = (identify_pin, 0, 0)
         elif action in ("ball", "platform"):
             status = Status.LEVEL
+            if mapped_pins is not None:
+                pins = mapped_pins
         elif (self.platform is not None and self.detection is not None
               and now - self.frame_time <= 0.25):
-            status = Status.TRACKING
+            status = action if action in (Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL) else Status.TRACKING
             ball = self.platform.normalize(self.detection[0])
         if status == Status.FREQ_RUN:
             ball = freq_run  # (axis code, Hz) rides in the ball fields, which are unused in this mode
-        trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims, 0.0, 0, *DEFAULT_GAINS)
+        level_pins = mapped_pins or (self.platform.pins if self.platform is not None else SERVO_PINS)
+        trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *level_pins, *trims, 0.0, 0, *DEFAULT_GAINS)
         # Each button press gets its own ID, even if it selects the same mode again.
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
         timestamp = mode_request_id if status == Status.SWEEP else frame_ms
         tracking_gains = gains
-        if status == Status.TRACKING:
+        if status in (Status.TRACKING, Status.AUTOROTATION, Status.AUTOTILT, Status.AUTOLEVEL):
             tracking_gains = tuple(value / 10 for value in self.active_gains(manual_gains))
+        if status == Status.TRACKING and self.path is not None and self.path.circle is not None:
+            kp, _, kd = tracking_gains
+            target = self.path.circle.command_target(target, kp, kd)
         command = PACKET.pack(SYNC, status, *pins, *ball, *target, timestamp, *tracking_gains)
-        level = PACKET.pack(SYNC, Status.LEVEL, *pins, 0, 0, 0, 0, frame_ms, *gains)
+        level = PACKET.pack(SYNC, Status.LEVEL, *level_pins, 0, 0, 0, 0, frame_ms, *gains)
         # During the autotune sweep the firmware keeps the ball in place from this stream.
         stream = None
         if (status in SWEEP_MODES and self.platform is not None and self.detection is not None
