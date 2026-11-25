@@ -18,7 +18,7 @@ float pid_get_xtilt(BallData* ball_data, bool autotune);
 float pid_get_ytilt(BallData* ball_data, bool autotune);
 float e_av(BallData* ball_data, char axis);
 float de_av(BallData* ball_data, char axis);
-
+void pid_reset();
 void autotune_set_kp(float kp);
 
 

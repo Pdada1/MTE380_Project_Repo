@@ -156,10 +156,10 @@ uint8_t sweep_service(char axes, float* tx, float* ty, bool* updated) {
 
         // Each call advances that axis' integral, so only call the axes being held.
         if (axes != 'y') {
-            *tx = pid_get_xtilt(&sweep_pid_data);
+            *tx = pid_get_xtilt(&sweep_pid_data, false);
         }
         if (axes != 'x') {
-            *ty = pid_get_ytilt(&sweep_pid_data);
+            *ty = pid_get_ytilt(&sweep_pid_data, false);
         }
         *updated = true;
     }
