@@ -1,16 +1,19 @@
-
+ 
 #include "camera_servo.h"
 #include "camera_modes.h"
 #include "controller.h"
+#include "autotune.h"
 #include "alternate_tracking.h"
+#include "autolevel/controller.h"
 
 BallData ballData; //Ball data to be fed to the controller (x,y,t,xr,yr)
 uint16_t num_samples = 0;
+static bool autolevel_active = false;
 
 void setup() {
     //Laptop + camera init
     Serial.begin(115200);
-
+ 
     servoInit();
 }
 
@@ -35,36 +38,52 @@ static void track_alternate(const CameraPacket& packet) {
     ballData.servo_C_pin = packet.servo_pins[2];
     const AlternateFrame frame = {
         packet.x, packet.y, packet.xr, packet.yr,
-        (received_ms - clock_origin) / 1000.0f
+        (received_ms - clock_origin) / 1000.0f,
+        packet.timestamp
     };
     if (packet.status == PacketStatus::Autorotation) {
         autorotate::track(frame, apply_alternate_tilt);
-    } 
-    else {
+    } else {
         autotilt::track(frame, apply_alternate_tilt);
     }
 }
 
 void loop() {
     if (camera_data_ready()) {
+        const CameraPacket frame = latest_camera_packet;
         camera_read_data(&ballData);
-        num_samples++;
+        if (frame.status == PacketStatus::Autolevel) {
+            if (!autolevel_active) {
+                autolevel::reset();
+                autolevel_active = true;
+            }
+            autolevel::track(ballData, apply_alternate_tilt);
+        } else {
+            if (autolevel_active) {
+                autolevel::reset();
+                autolevel_active = false;
+            }
+            num_samples++;
+          
+            // Run autotune routine: checks if autotune PID parameters should be used
+            // FIXME make it so that use_autotune is always false if Autotune_MM is currently not active
+            bool use_autotune = autotune_routine(&ballData);
 
-        //Only run controller after ballData buffers have filled
-        if (num_samples >= CAMERA_SAMPLES) {
-            float thetax = pid_get_xtilt(&ballData);
-            float thetay = pid_get_ytilt(&ballData);
-            setTilt(thetax, thetay, &ballData);
-            
-            // Serial.print(thetax);
-            // Serial.print(' ');
-            // Serial.println(thetay);
+
+            //Only run the regular controller for ordinary tracking frames.
+            if (num_samples >= CAMERA_SAMPLES) {
+                float thetax = pid_get_xtilt(&ballData, use_autotune);
+                float thetay = pid_get_ytilt(&ballData, use_autotune);
+                setTilt(thetax, thetay, &ballData);
+            }
         }
     }
 
-    // Handle alternative packet modes, e.g. level, autotune, and autolevel
+    // Handle one-shot camera commands.
     CameraPacket command;
     if (camera_take_command(command)) {
+        autolevel::reset();
+        autolevel_active = false;
         if (command.status == PacketStatus::Autorotation || command.status == PacketStatus::Autotilt) {
             track_alternate(command);
         } 

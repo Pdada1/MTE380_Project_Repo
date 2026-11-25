@@ -48,6 +48,7 @@ bool camera_data_ready() {
     static uint8_t sync[3] = {};
     static bool have_tracking_frame = false;
     static uint32_t last_frame_ms = 0;
+    static PacketStatus last_frame_status = PacketStatus::BallLost;
 
     // Keep enough bytes buffered for the payload after the last sync byte.
     while (!command_pending && Serial.available() > (int)sizeof(CameraPacket)) {
@@ -60,16 +61,17 @@ bool camera_data_ready() {
                              sizeof(latest_camera_packet));
             sync[0] = sync[1] = sync[2] = 0;
 
-            // Stop draining here so the command runs before any later tracking packet.
             const PacketStatus status = latest_camera_packet.status;
-            if (status != PacketStatus::Tracking && status != PacketStatus::BallLost) {
+            const bool tracking_frame = status == PacketStatus::Tracking || status == PacketStatus::Autolevel; // @MM || status == PacketStatus::Autotune_MM;
+            if (!tracking_frame && status != PacketStatus::BallLost) {
                 command_pending = true;
                 return false;
             }
 
             // Use the Python timestamp only to reject resends of the same frame.
-            if (status == PacketStatus::Tracking && (!have_tracking_frame || latest_camera_packet.timestamp != last_frame_ms)) {
+            if (status == PacketStatus::Tracking && (!have_tracking_frame || latest_camera_packet.timestamp != last_frame_ms)) { // @MM if (tracking_frame && ...)
                 last_frame_ms = latest_camera_packet.timestamp;
+                last_frame_status = status;
                 have_tracking_frame = true;
                 return true;
             }
@@ -101,6 +103,7 @@ void camera_read_data(BallData* ball_data) { //Assumes camera data is ready
         ball_data->kp = latest_camera_packet.kp;
         ball_data->ki = latest_camera_packet.ki;
         ball_data->kd = latest_camera_packet.kd;
+        ball_data->status = latest_camera_packet.status;   // @MM
     } while (camera_data_ready());
 
     //Logging
@@ -288,4 +291,3 @@ void setTilt(float thetax, float thetay, BallData* ball_data) { //Sets platform 
     setServoAngle('B', theta2, ball_data);
     setServoAngle('C', theta3, ball_data);
 }
-
