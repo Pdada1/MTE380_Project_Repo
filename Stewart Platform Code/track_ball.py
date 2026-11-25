@@ -64,7 +64,7 @@ class Status(IntEnum):
 
 # These modes from the Status class send ONE packet then do not send more, i.e.,
 # they act like a latch. All other modes spam packets with their Status type
-HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE, Status.AUTOLEVEL, Status.FREQ_RUN)
+HOLD_LEVEL_MODES = (Status.LEVEL, Status.SWEEP, Status.AUTOTUNE, Status.FREQ_RUN)
 # Modes where the firmware runs the frequency sweep and needs the ball stream to hold the other axis.
 SWEEP_MODES = (Status.AUTOTUNE, Status.FREQ_RUN)
 SWEEP_AXIS_CODE = {"x": 1.0, "y": 2.0}  # FREQ_RUN axis codes
