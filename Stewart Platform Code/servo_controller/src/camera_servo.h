@@ -15,13 +15,13 @@
 // Servo C: index 1
 #define SERVO_A_MAX 124.0 // Link touches ground
 #define SERVO_A_MIN 65.0 //Links are straight
-#define SERVO_A_HORIZ 91.0 // Horizontal position (linkage parallel to gnd)
+#define SERVO_A_HORIZ 94.0 // Horizontal position (linkage parallel to gnd)
 #define SERVO_B_MAX 113.0
 #define SERVO_B_MIN 65.0
-#define SERVO_B_HORIZ 95.0
+#define SERVO_B_HORIZ 96.0
 #define SERVO_C_MAX 106.0
 #define SERVO_C_MIN 55.0
-#define SERVO_C_HORIZ 79.0
+#define SERVO_C_HORIZ 81.0
 
 // stewart platform dimensions 
 #define S 140 // distance from center of platform to pivot point

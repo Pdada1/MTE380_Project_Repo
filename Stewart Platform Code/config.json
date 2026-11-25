@@ -19,34 +19,34 @@
   },
   "calibration": {
     "origin_px": [
-      285.3866,
-      241.368525
+      321.9596211365903,
+      240.8788634097707
     ],
-    "platform_radius_px": 214.93330295753523,
+    "platform_radius_px": 209.81553488101747,
     "zero_degree_servo": 0
   },
   "servos": [
     {
       "index": 0,
       "point_px": [
-        274,
-        456
+        459,
+        82
       ],
       "pin": 0
     },
     {
       "index": 1,
       "point_px": [
-        477,
-        144
+        117,
+        196
       ],
       "pin": 2
     },
     {
       "index": 2,
       "point_px": [
-        108,
-        120
+        385,
+        441
       ],
       "pin": 1
     }
