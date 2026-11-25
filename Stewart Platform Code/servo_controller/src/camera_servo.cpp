@@ -48,6 +48,7 @@ bool camera_data_ready() {
     static uint8_t sync[3] = {};
     static bool have_tracking_frame = false;
     static uint32_t last_frame_ms = 0;
+    static PacketStatus last_frame_status = PacketStatus::BallLost;
 
     // Keep enough bytes buffered for the payload after the last sync byte.
     while (!command_pending && Serial.available() > (int)sizeof(CameraPacket)) {
@@ -61,22 +62,16 @@ bool camera_data_ready() {
             sync[0] = sync[1] = sync[2] = 0;
 
             const PacketStatus status = latest_camera_packet.status;
-
-            //@MM
-            const bool is_sample = (status == PacketStatus::Tracking ||
-                                    status == PacketStatus::Autotune_MM);
-
-            
-
-            // Stop draining here so the command runs before any later tracking packet.
-            if (!is_sample && status != PacketStatus::BallLost) {
+            const bool tracking_frame = status == PacketStatus::Tracking || status == PacketStatus::Autolevel; // @MM || status == PacketStatus::Autotune_MM;
+            if (!tracking_frame && status != PacketStatus::BallLost) {
                 command_pending = true;
                 return false;
             }
 
-            // Python can resend the same frame. Use it only once for PID timing.
-            if (is_sample && (!have_tracking_frame || latest_camera_packet.timestamp != last_frame_ms)) {                
+            // Use the Python timestamp only to reject resends of the same frame.
+            if (status == PacketStatus::Tracking && (!have_tracking_frame || latest_camera_packet.timestamp != last_frame_ms)) { // @MM if (tracking_frame && ...)
                 last_frame_ms = latest_camera_packet.timestamp;
+                last_frame_status = status;
                 have_tracking_frame = true;
                 return true;
             }
@@ -104,7 +99,7 @@ void camera_read_data(BallData* ball_data) { //Assumes camera data is ready
         ball_data->y[CAMERA_SAMPLES-1] = latest_camera_packet.y;
         ball_data->xr[CAMERA_SAMPLES-1] = latest_camera_packet.xr;
         ball_data->yr[CAMERA_SAMPLES-1] = latest_camera_packet.yr;
-        ball_data->frame_ms[CAMERA_SAMPLES-1] = latest_camera_packet.timestamp;
+        ball_data->frame_ms[CAMERA_SAMPLES-1] = millis();
         ball_data->kp = latest_camera_packet.kp;
         ball_data->ki = latest_camera_packet.ki;
         ball_data->kd = latest_camera_packet.kd;
@@ -132,6 +127,30 @@ void servoInit() {
 
 /*!
  *  @brief  Sets the servo angle for a given servo 
+ *  @param  channel Servo pin
+ *  @param  angle Angle of the servo in degrees
+ */
+static void write_servo_angle(uint8_t channel, float angle) {
+    const float period_us = 1000000 / (float)SERVO_FREQ;
+    const float duty = (angle / SERVO_RANGE) * (SERVO_MAX_DUTY - SERVO_MIN_DUTY) + SERVO_MIN_DUTY;
+    if (channel < 16) {
+        servo_drive.writeMicroseconds(channel, duty * period_us);
+    }
+}
+
+void identify_servo_pins(const CameraPacket& packet) {
+    // Use the travel range shared by all three servo calibrations.
+    const float low = max(SERVO_A_MIN, max(SERVO_B_MIN, SERVO_C_MIN));
+    const float high = min(SERVO_A_MAX, min(SERVO_B_MAX, SERVO_C_MAX));
+    // A selector of 16 puts all channels low for the camera baseline.
+    const uint8_t selected = packet.servo_pins[0];
+    for (uint8_t channel = 0; channel < 16; ++channel) {
+        write_servo_angle(channel, channel == selected ? high : low);
+    }
+}
+
+/*!
+ *  @brief  Sets the servo angle for a given servo, relative to horizontal
  *  @param  servo Servo number 'A'/'B'/'C'
  *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
  *  @param  ball_data ballData struct
@@ -160,10 +179,7 @@ void setServoAngle(char servo, float angle_rel_horiz, BallData* ball_data)
             return;
     }
 
-    float period_us = 1000000/(float)SERVO_FREQ;
-    float duty = (angle_servo/(float)SERVO_RANGE)*(SERVO_MAX_DUTY-SERVO_MIN_DUTY) + SERVO_MIN_DUTY;
-    float pulse_us = duty*period_us;
-    servo_drive.writeMicroseconds(servo_num, pulse_us);
+    write_servo_angle(servo_num, angle_servo);
 }
 
 void setTilt(float thetax, float thetay, BallData* ball_data) { //Sets platform angle relative to neutral position

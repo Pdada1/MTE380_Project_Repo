@@ -1,8 +1,8 @@
 #include "controller.h"
 #include "LinearFit.h" //SimpleRegression library
-
+ 
 #define POS_SAMPLES 1
-#define VEL_SAMPLES 2
+#define VEL_SAMPLES 3
 
 float int_ex = 0;
 float int_ey = 0;
@@ -14,6 +14,12 @@ float kd_a = 0;
 
 
 
+ 
+void pid_reset() {
+    int_ex = 0;
+    int_ey = 0;
+}
+ 
 float e_av(BallData* ball_data, char axis) {
     float* x;
     float* xr;
@@ -37,7 +43,7 @@ float e_av(BallData* ball_data, char axis) {
     }
     return sum/POS_SAMPLES;
 }
-
+ 
 float de_av(BallData* ball_data, char axis) {
     float* x;
     switch (axis) {
@@ -53,6 +59,9 @@ float de_av(BallData* ball_data, char axis) {
     
     // Generate error/time arrays relative to the first velocity sample.
     const uint32_t start_ms = ball_data->frame_ms[CAMERA_SAMPLES-VEL_SAMPLES];
+    if (ball_data->frame_ms[CAMERA_SAMPLES-1] == start_ms) {
+        return 0.0f; // Buffered frames can be handled in the same Arduino millisecond.
+    }
     float ex[VEL_SAMPLES] = {0};
     float t[VEL_SAMPLES] = {0};
     for (int i=0; i<VEL_SAMPLES; i++) {
@@ -60,16 +69,16 @@ float de_av(BallData* ball_data, char axis) {
         const uint32_t elapsed_ms = ball_data->frame_ms[CAMERA_SAMPLES-VEL_SAMPLES+i] - start_ms;
         t[i] = elapsed_ms / 1000.0f;
     }
-
+ 
     //Linear regression to find average velocity
     LinearFit<float, float> lf;
     lf.fit(t, ex, VEL_SAMPLES);
-
+ 
     float slope = lf.slope();
-
+ 
     return slope;
 }
-
+ 
 float inte(BallData* ball_data, char axis) { //Make sure to only call once (for 'x' and then 'y') per new sample, otherwise integral will be inaccurate
     float e;
     // Subtract in unsigned milliseconds so elapsed time survives timestamp rollover.
@@ -102,22 +111,6 @@ float pid_get_tilt(BallData* ball_data, char axis, bool autotune) { //Gets tilt 
     else 
         u = e*ball_data->kp + int_e*ball_data->ki + d_e*ball_data->kd;
     
-
-
-
-    // Debug every 10 control updates
-    // static int count = 0;
-    // if (axis == 'x' && ++count >= 10) {
-    //     count = 0;
-
-    //     Serial.print("P: ");
-    //     Serial.print(p, 3);
-    //     Serial.print(" D: ");
-    //     Serial.print(d, 3);
-    //     Serial.print(" U: ");
-    //     Serial.println(u, 3);
-    // }
-
     return u;
 }
 
@@ -133,8 +126,6 @@ float pid_get_ytilt(BallData* ball_data, bool autotune) {
 
 
 // @ MM
-
-
 // FIXME refactor code such that kp is only ever set, not scaled
 void autotune_set_kp(float kp) {
     kp_a = constrain(kp, KP_MIN, KP_MAX);
@@ -183,6 +174,7 @@ bool autotune_ki_at_max() {
 }
 
 // Start a ki run from a known integrator state.
+// FIXME this is identical to pid_reset(), so refactor
 void autotune_reset_integral() {
     int_ex = 0;
     int_ey = 0;

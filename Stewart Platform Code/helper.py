@@ -21,8 +21,11 @@ def open_camera():
     if not camera.isOpened():
         camera.release()
         raise RuntimeError(f"Unable to open camera {CAMERA_INDEX}")
+    # MJPG first: uncompressed 720p is limited to a low frame rate on many webcams.
+    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+    camera.set(cv2.CAP_PROP_FPS, 30)
     return camera
 
 

@@ -1,27 +1,27 @@
 #ifndef CAMERA_SERVO_H
 #define CAMERA_SERVO_H
-
+ 
 #include <Arduino.h>
 #include <Adafruit_PWMServoDriver.h>
 #include <Wire.h>
-
+ 
 #define SERVO_FREQ 50 // Analog servos run at ~50 Hz updates
 #define SERVO_MIN_DUTY 0.5/20
 #define SERVO_MAX_DUTY 2.5/20
 #define SERVO_RANGE 180
-
+ 
 // Servo A: index 0 (as labelled on platform)
 // Servo B: index 2
 // Servo C: index 1
 #define SERVO_A_MAX 124.0 // Link touches ground
 #define SERVO_A_MIN 65.0 //Links are straight
-#define SERVO_A_HORIZ (83.0 - 3) // Horizontal position (linkage parallel to gnd)
+#define SERVO_A_HORIZ 84.0 // Horizontal position (linkage parallel to gnd)
 #define SERVO_B_MAX 113.0
 #define SERVO_B_MIN 65.0
 #define SERVO_B_HORIZ (85.0 - 1)
 #define SERVO_C_MAX 106.0
 #define SERVO_C_MIN 47.0
-#define SERVO_C_HORIZ (71.0 - 4)
+#define SERVO_C_HORIZ 70.0
 
 // stewart platform dimensions 
 #define S 140 // distance from center of platform to pivot point
@@ -30,10 +30,10 @@
 #define L_11 80
 #define L_12 94
 #define PLANE_ANGLE_MAX 15
-
+ 
 #define SHIELD_ADDR 0x40
 
-#define CAMERA_SAMPLES 3
+#define CAMERA_SAMPLES 12
 
 // Match the status byte sent by track_ball.py.
 enum class PacketStatus : uint8_t {
@@ -44,9 +44,14 @@ enum class PacketStatus : uint8_t {
     Autolevel = 4,
     Sweep = 5,
     ServoTrim = 6,
+    Autorotation = 7,
     Autotune_MM = 8,
+    SweepData = 9, //ball/target stream the PC sends while an autotune sweep runs
+    FreqRun = 10,   // one frequency on one axis: x = axis (1 = X, 2 = Y), y = frequency in Hz
+    IdentifyServos = 11,
+    Autotilt = 12,
 };
-
+ 
 // Payload of Python's <3sB3B4fI3f packet, after the three sync bytes.
 struct __attribute__((packed)) CameraPacket {
     PacketStatus status;
@@ -56,9 +61,9 @@ struct __attribute__((packed)) CameraPacket {
     uint32_t timestamp; // Frame time in ms, or the request ID for sweep
     float kp, ki, kd;
 };
-
+ 
 extern CameraPacket latest_camera_packet;
-
+ 
 struct BallData { //Struct to keep track of all relevant ball data
     float x[CAMERA_SAMPLES] = {0}; //ordered old measurements -> new measurements
     float y[CAMERA_SAMPLES] = {0};
@@ -74,24 +79,15 @@ struct BallData { //Struct to keep track of all relevant ball data
 
     PacketStatus status = PacketStatus::BallLost; // @MM
 };
-
+ 
 bool camera_data_ready();
 bool camera_take_command(CameraPacket& packet);
-
 void camera_read_data(BallData* ball_data);
-
+ 
 void servoInit();
-
-/*!
- *  @brief  Sets the servo angle for a given servo 
- *  @param  servo Servo number 'A'/'B'/'C'
- *  @param  angle_rel_horiz Angle of the servo in degrees relative to the platform
- *  @param  ball_data ballData struct
- */
+void identify_servo_pins(const CameraPacket& packet);
 void setServoAngle(char servo, float angle_rel_horiz, BallData* ball_data);
-
 void apply_servo_trims(const CameraPacket& packet, BallData& ballData);
-
 void setTilt(float thetax, float thetay, BallData* ball_data);
-
+ 
 #endif

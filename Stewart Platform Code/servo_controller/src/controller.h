@@ -1,9 +1,9 @@
 #ifndef CONTROLLER_H
 #define CONTROLLER_H
-
+ 
 #include "camera_servo.h"
 
-#define I_LIMIT 2
+#define I_LIMIT 1.6
 
 
 // Autotuning limits
