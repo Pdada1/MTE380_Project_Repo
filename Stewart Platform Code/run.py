@@ -15,7 +15,7 @@ from calibrate import calibration_objects, find_platform, identify_marker, read_
 from helper import Platform, draw_ball
 from track_ball import (
     ARDUINO_SERIAL_PORT, DEFAULT_GAINS, HISTORY_SECONDS, HOLD_LEVEL_MODES, SWEEP_AXIS_CODE, SWEEP_MODES,
-    TRIM_LIMIT, TRIM_PINS,
+    TRIM_LIMIT,
     Hardware, Status, Tracker, make_trajectory,
 )
 
