@@ -383,9 +383,9 @@ class Tracker:
         level_pins = mapped_pins or (self.platform.pins if self.platform is not None else SERVO_PINS)
         
         # time domain parameters for PID autotuning is sent through the trim packet gains
-        if status == Status.AUTOTUNE_MM
+        if status == Status.AUTOTUNE_MM:
             trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *TRIM_PINS, *trims, 0, float(self.rise_time_ms), float(self.max_overshoot_pct), float(self.max_error_ss))
-        else
+        else:
             trim = PACKET.pack(SYNC, Status.SERVO_TRIM, *level_pins, *trims, 0.0, 0, *DEFAULT_GAINS)
         # Each button press gets its own ID, even if it selects the same mode again.
         mode_request = (status, mode_request_id) if status in HOLD_LEVEL_MODES else None
